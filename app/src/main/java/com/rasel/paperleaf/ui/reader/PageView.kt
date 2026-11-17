@@ -56,6 +56,8 @@ fun PageView(
     modifier: Modifier = Modifier,
     /** What is being read aloud now: page (1-based) and characters. */
     spoken: Pair<Int, IntRange>? = null,
+    /** Space kept free above and below two pages (status bar, page line), in pixels. */
+    spreadInsets: Pair<Float, Float> = 0f to 0f,
 ) {
     val density = LocalDensity.current
     val handleRadius = with(density) { 9f * this.density }
@@ -67,29 +69,58 @@ fun PageView(
         Paint(Paint.FILTER_BITMAP_FLAG).apply { colorFilter = ColorMatrixColorFilter(tint.matrix()) }
     }
 
-    // Converts between the screen and page points of the page on screen.
-    fun geometry(w: Float, h: Float): Pair<RectF, Float> {
-        val fit = state.images.fit(state.page - 1, RectF(0f, 0f, w, h))
-        val scale = fit.width() / state.doc.pageSize(state.page - 1).width
-        return fit to scale
+    /** Two pages meeting at the middle of the screen (left page [left]'s size). */
+    fun spreadRects(left: Int, w: Float, h: Float): Pair<RectF, RectF> {
+        val size = state.doc.pageSize((left - 1).coerceIn(0, state.pageCount - 1))
+        val (insetTop, insetBottom) = spreadInsets
+        val room = (h - insetTop - insetBottom).coerceAtLeast(h / 2)
+        val s = minOf((w / 2) / size.width, room / size.height)
+        val pw = size.width * s
+        val ph = size.height * s
+        val spine = w / 2
+        val top = insetTop + (room - ph) / 2
+        return RectF(spine - pw, top, spine, top + ph) to RectF(spine, top, spine + pw, top + ph)
     }
 
-    fun toPage(v: Offset, w: Float, h: Float): Offset {
-        val (fit, scale) = geometry(w, h)
-        val cx = w / 2
-        val cy = h / 2
-        val x = (v.x - state.pan.x - cx) / state.zoom + cx
-        val y = (v.y - state.pan.y - cy) / state.zoom + cy
-        return Offset((x - fit.left) / scale, (y - fit.top) / scale)
+    /** Where each page on screen sits (before zoom): one page, or two side by side. */
+    fun layout(w: Float, h: Float): List<Pair<Int, RectF>> {
+        if (!state.spread) return listOf(state.page to state.images.fit(state.page - 1, RectF(0f, 0f, w, h)))
+        val (left, right) = spreadRects(state.page, w, h)
+        return if (state.page + 1 <= state.pageCount) listOf(state.page to left, state.page + 1 to right)
+        else listOf(state.page to left)
     }
 
-    fun toView(p: Offset, w: Float, h: Float): Offset {
-        val (fit, scale) = geometry(w, h)
-        val cx = w / 2
-        val cy = h / 2
-        val x = fit.left + p.x * scale
-        val y = fit.top + p.y * scale
-        return Offset((x - cx) * state.zoom + cx + state.pan.x, (y - cy) * state.zoom + cy + state.pan.y)
+    fun scaleOf(page: Int, rect: RectF) = rect.width() / state.doc.pageSize(page - 1).width
+
+    // Converts between the screen and page points, through the zoom.
+    fun unzoom(v: Offset, w: Float, h: Float) = Offset(
+        (v.x - state.pan.x - w / 2) / state.zoom + w / 2,
+        (v.y - state.pan.y - h / 2) / state.zoom + h / 2,
+    )
+
+    /** The page under [v] and the point on it. */
+    fun toPage(v: Offset, w: Float, h: Float): Pair<Int, Offset> {
+        val c = unzoom(v, w, h)
+        val pages = layout(w, h)
+        val (page, rect) = pages.firstOrNull { c.x <= it.second.right } ?: pages.last()
+        val s = scaleOf(page, rect)
+        return page to Offset((c.x - rect.left) / s, (c.y - rect.top) / s)
+    }
+
+    /** The point on [page] under [v] (also when the finger is off that page). */
+    fun toPageOn(page: Int, v: Offset, w: Float, h: Float): Offset {
+        val c = unzoom(v, w, h)
+        val rect = layout(w, h).firstOrNull { it.first == page }?.second ?: return Offset(-1f, -1f)
+        val s = scaleOf(page, rect)
+        return Offset((c.x - rect.left) / s, (c.y - rect.top) / s)
+    }
+
+    fun toView(page: Int, p: Offset, w: Float, h: Float): Offset? {
+        val rect = layout(w, h).firstOrNull { it.first == page }?.second ?: return null
+        val s = scaleOf(page, rect)
+        val x = rect.left + p.x * s
+        val y = rect.top + p.y * s
+        return Offset((x - w / 2) * state.zoom + w / 2 + state.pan.x, (y - h / 2) * state.zoom + h / 2 + state.pan.y)
     }
 
     fun clampPan(pan: Offset, zoom: Float, w: Float, h: Float): Offset {
@@ -101,19 +132,22 @@ fun PageView(
     /** The selection handles in screen points: start (left, bottom of the first line), end. */
     fun handles(w: Float, h: Float): Pair<Offset, Offset>? {
         val s = state.selection ?: return null
-        if (s.page != state.page) return null
+        if (s.page !in state.visiblePages) return null
         val text = state.textOf(s.page) ?: return null
         val a = text.box(s.range.first) ?: return null
         val b = text.box(s.range.last) ?: return null
-        return toView(Offset(a.left, a.bottom), w, h) to toView(Offset(b.right, b.bottom), w, h)
+        val start = toView(s.page, Offset(a.left, a.bottom), w, h) ?: return null
+        val end = toView(s.page, Offset(b.right, b.bottom), w, h) ?: return null
+        return start to end
     }
 
-    // Draws page [page] (1-based) with its marks into [area].
-    fun drawPage(c: Canvas, page: Int, area: RectF, live: Boolean) {
+    // Draws page [page] (1-based) with its marks into [area] (one page: fitted
+    // and centered on paper; [exact]: filling that rectangle, for two pages).
+    fun drawPage(c: Canvas, page: Int, area: RectF, live: Boolean, exact: Boolean = false) {
         val fill = Paint().apply { color = tint.blank }
         c.drawRect(area, fill)
         if (page !in 1..state.pageCount) return
-        val fit = state.images.fit(page - 1, area)
+        val fit = if (exact) area else state.images.fit(page - 1, area)
         val bitmap = (if (live && state.zoom > 1.05f) state.images.sharp(page - 1) else null) ?: state.images[page - 1]
         if (bitmap != null) c.drawBitmap(bitmap, null, fit, pagePaint)
         val scale = fit.width() / state.doc.pageSize(page - 1).width
@@ -165,7 +199,11 @@ fun PageView(
     Canvas(
         modifier
             .fillMaxSize()
-            .onSizeChanged { state.images.setViewport(it.width, it.height) }
+            .onSizeChanged {
+                // Held sideways: two pages, like an open book.
+                state.setSpreadMode(it.width > it.height)
+                state.images.setViewport(it.width, it.height)
+            }
             .pointerInput(state) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
@@ -189,7 +227,7 @@ fun PageView(
                                 val e = awaitPointerEvent()
                                 val ch = e.changes.firstOrNull { it.id == down.id } ?: break
                                 if (!ch.pressed) break
-                                val p = toPage(ch.position - Offset(0f, handleRadius * 2), w, h)
+                                val p = toPageOn(s.page, ch.position - Offset(0f, handleRadius * 2), w, h)
                                 state.dragSelection(p.x, p.y, movingFocus)
                                 ch.consume()
                             }
@@ -225,15 +263,15 @@ fun PageView(
                         }
 
                         "long" -> {
-                            val p = toPage(start, w, h)
-                            state.selectWordAt(p.x, p.y)
+                            val (pressed, p) = toPage(start, w, h)
+                            state.selectWordAt(pressed, p.x, p.y)
                             // Keep the finger down and move: the selection grows.
                             while (true) {
                                 val e = awaitPointerEvent()
                                 val ch = e.changes.firstOrNull { it.id == down.id } ?: break
                                 if (!ch.pressed) break
                                 if ((ch.position - start).getDistance() > slop && state.selection != null) {
-                                    val q = toPage(ch.position, w, h)
+                                    val q = toPageOn(state.selection!!.page, ch.position, w, h)
                                     state.dragSelection(q.x, q.y, movingFocus = true)
                                 }
                                 ch.consume()
@@ -348,7 +386,48 @@ fun PageView(
         drawIntoCanvas { canvas ->
             val c = canvas.nativeCanvas
             val turn = state.turn
-            if (turn != null) {
+            if (state.spread) {
+                val (leftRect, rightRect) = spreadRects(state.page, w, h)
+                val spine = Paint().apply {
+                    shader = android.graphics.LinearGradient(
+                        w / 2 - 28f, 0f, w / 2 + 28f, 0f,
+                        intArrayOf(0x00000000, 0x2A000000, 0x00000000),
+                        floatArrayOf(0f, 0.5f, 1f),
+                        android.graphics.Shader.TileMode.CLAMP,
+                    )
+                }
+                fun spreadOf(left: Int, live: Boolean): SheetDrawer = { cv ->
+                    cv.drawColor(tint.blank)
+                    drawPage(cv, left, leftRect, live, exact = true)
+                    if (left + 1 <= state.pageCount) drawPage(cv, left + 1, rightRect, live, exact = true)
+                    cv.drawRect(w / 2 - 28f, leftRect.top, w / 2 + 28f, leftRect.bottom, spine)
+                }
+                c.drawColor(tint.blank)
+                if (turn != null && curl) {
+                    drawBookCurl(
+                        c, leftRect, rightRect, state.progress, turn.forward, state.pivotY, state.tilt,
+                        first = if (turn.forward) turn.from else turn.to,
+                        page = { cv, p, r -> if (p in 1..state.pageCount) drawPage(cv, p, r, false, exact = true) else cv.drawRect(r, Paint().apply { color = tint.blank }) },
+                        paper = tint.blank,
+                    )
+                    c.drawRect(w / 2 - 28f, leftRect.top, w / 2 + 28f, leftRect.bottom, spine)
+                } else if (turn != null) {
+                    drawSlide(c, w, h, state.progress, turn.forward, spreadOf(turn.from, false), spreadOf(turn.to, false), tint.blank)
+                } else {
+                    c.save()
+                    c.translate(state.edgePush, 0f)
+                    c.translate(state.pan.x + w / 2, state.pan.y + h / 2)
+                    c.scale(state.zoom, state.zoom)
+                    c.translate(-w / 2, -h / 2)
+                    spreadOf(state.page, true)(c)
+                    c.restore()
+                    handles(w, h)?.let { (a, b) ->
+                        val knob = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF2E6F6A.toInt() }
+                        c.drawCircle(a.x, a.y + handleRadius, handleRadius, knob)
+                        c.drawCircle(b.x, b.y + handleRadius, handleRadius, knob)
+                    }
+                }
+            } else if (turn != null) {
                 val shot: SheetDrawer = { cv -> drawPage(cv, turn.from, area, false) }
                 val neighbor: SheetDrawer = { cv -> drawPage(cv, turn.to, area, false) }
                 if (curl) {

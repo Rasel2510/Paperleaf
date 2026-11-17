@@ -65,9 +65,10 @@ class PageImages(private val doc: PdfDoc, private val scope: CoroutineScope) {
     /** Draw the pages around [index] first; forget far ones. */
     fun focus(index: Int) {
         center = index
-        val far = cache.keys.filter { abs(it - index) > 2 }
+        val far = cache.keys.filter { it - index > 3 || index - it > 2 }
         far.forEach { cache.remove(it) }
-        for (i in listOf(index, index + 1, index - 1, index + 2)) request(i)
+        // With two pages on screen, the pages of the spreads either side too.
+        for (i in listOf(index, index + 1, index - 1, index + 2, index + 3, index - 2)) request(i)
         if (sharp?.first != index) sharp = null
     }
 

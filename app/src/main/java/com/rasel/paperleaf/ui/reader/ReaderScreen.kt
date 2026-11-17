@@ -87,6 +87,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
@@ -162,22 +166,29 @@ private fun Reader(state: ReaderState, onClose: () -> Unit) {
     LaunchedEffect(changes) { state.reloadNotes() }
 
     // Read aloud: the voice reads the page, then the page turns and it goes on.
+    // With two pages on screen it reads the left one, then the right one, then turns.
     val aloudHolder = remember { arrayOfNulls<ReadAloud>(1) }
+    val aloudPageState = remember { mutableIntStateOf(0) }
+    var aloudPage by aloudPageState
+    fun readAloud(page: Int = state.page) {
+        aloudPageState.intValue = page
+        scope.launch { aloudHolder[0]?.readPage(page, state.pageText(page)) }
+    }
     val aloud = remember(state) {
         ReadAloud(context, scope) {
-            if (state.page < state.pageCount) state.turnPage(true) else aloudHolder[0]?.stop()
+            val next = aloudPageState.intValue + 1
+            when {
+                next in state.visiblePages -> readAloud(next)
+                state.visiblePages.last < state.pageCount -> state.turnPage(true)
+                else -> aloudHolder[0]?.stop()
+            }
         }.also { aloudHolder[0] = it }
-    }
-    var aloudPage by remember { mutableIntStateOf(0) }
-    fun readAloud() {
-        aloudPage = state.page
-        scope.launch { aloud.readPage(state.page, state.pageText(state.page)) }
     }
     DisposableEffect(aloud) { onDispose { aloud.shutdown() } }
     LaunchedEffect(state.page, aloud.status) {
         val going = aloud.status == ReadAloud.Status.Reading || aloud.status == ReadAloud.Status.Starting
-        // A new page while reading (turned by the voice or by hand): read it from the top.
-        if (going && aloudPage != state.page) readAloud()
+        // New pages while reading (turned by the voice or by hand): read them from the top.
+        if (going && aloudPage !in state.visiblePages) readAloud()
     }
     LaunchedEffect(aloud.problem) {
         aloud.problem?.let {
@@ -248,6 +259,10 @@ private fun Reader(state: ReaderState, onClose: () -> Unit) {
             curl = turnStyle == PageTurn.Flip,
             onTapMiddle = { chrome = !chrome },
             spoken = aloud.current,
+            spreadInsets = with(LocalDensity.current) {
+                (WindowInsets.statusBars.getTop(this) + 6.dp.toPx()) to
+                    (WindowInsets.navigationBars.getBottom(this) + 26.dp.toPx())
+            },
         )
 
         // Top: the bar, or the search field.
@@ -355,7 +370,7 @@ private fun Reader(state: ReaderState, onClose: () -> Unit) {
                 if (aloud.reading) {
                     AloudBar(
                         aloud = aloud,
-                        onPlay = { if (aloudPage != state.page) readAloud() else aloud.resume() },
+                        onPlay = { if (aloudPage !in state.visiblePages) readAloud() else aloud.resume() },
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .navigationBarsPadding()
@@ -369,7 +384,12 @@ private fun Reader(state: ReaderState, onClose: () -> Unit) {
                         .navigationBarsPadding()
                         .padding(start = 20.dp, end = 20.dp, bottom = 6.dp),
                 ) {
-                    Text("PAGE ${state.page} / ${state.pageCount}", style = style)
+                    val pages = state.visiblePages
+                    Text(
+                        if (pages.first == pages.last) "PAGE ${state.page} / ${state.pageCount}"
+                        else "PAGES ${pages.first}–${pages.last} / ${state.pageCount}",
+                        style = style,
+                    )
                     Spacer(Modifier.width(14.dp))
                     Text(
                         chapter ?: "Chapter unavailable",

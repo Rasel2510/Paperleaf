@@ -151,6 +151,36 @@ class ReaderState(val book: Book, startPage: Int?, val doc: PdfDoc, private val 
         }
     }
 
+    // Two pages side by side (the phone held sideways). [page] is then the
+    // left page: always an odd page, so the pairs stay the same (1-2, 3-4…).
+
+    var spread by mutableStateOf(false)
+        private set
+
+    private val step: Int get() = if (spread) 2 else 1
+
+    private fun spreadStart(p: Int) = if (spread) p - (p - 1) % 2 else p
+
+    /** The pages on screen. */
+    val visiblePages: IntRange
+        get() = if (spread) page..minOf(page + 1, pageCount) else page..page
+
+    fun setSpreadMode(on: Boolean) {
+        if (on == spread || turn != null) return
+        spread = on
+        zoom = 1f
+        pan = Offset.Zero
+        val start = spreadStart(page)
+        if (start != page) {
+            // The same place, only shown as a pair: not a page turn.
+            page = start
+            scheduleSave()
+        }
+        images.focus(page - 1)
+        loadText(page)
+        loadText(page + 1)
+    }
+
     // Moving between pages
 
     private fun shown(newPage: Int) {
@@ -171,7 +201,7 @@ class ReaderState(val book: Book, startPage: Int?, val doc: PdfDoc, private val 
     /** A jump that is not a turn (contents, go to page, notes, search). */
     fun goTo(target: Int) {
         if (pageCount == 0) return
-        shown(target.coerceIn(1, pageCount))
+        shown(spreadStart(target.coerceIn(1, pageCount)))
     }
 
     val busy: Boolean get() = turn != null && settling
@@ -179,7 +209,7 @@ class ReaderState(val book: Book, startPage: Int?, val doc: PdfDoc, private val 
     /** A drag sideways began. Returns false when nothing will turn (no page there: the page is pushed instead). */
     fun startDrag(forward: Boolean, grabY: Float): Boolean {
         if (turn != null) return false
-        val to = page + if (forward) 1 else -1
+        val to = page + if (forward) step else -step
         if (to !in 1..pageCount) {
             edgePush = 0f
             return false
@@ -187,6 +217,7 @@ class ReaderState(val book: Book, startPage: Int?, val doc: PdfDoc, private val 
         pivotY = grabY.coerceIn(0f, 1f)
         tilt = 0f
         images[to - 1]
+        images[to]
         turn = Turn(page, to, forward)
         progress = 0f
         return true
@@ -244,7 +275,7 @@ class ReaderState(val book: Book, startPage: Int?, val doc: PdfDoc, private val 
             if (settling) queued = if (forward) 1 else -1
             return
         }
-        val to = page + if (forward) 1 else -1
+        val to = page + if (forward) step else -step
         if (to !in 1..pageCount) {
             scope.launch {
                 animate(0f, if (forward) -16f else 16f, animationSpec = tween(100)) { v, _ -> edgePush = v }
@@ -264,11 +295,11 @@ class ReaderState(val book: Book, startPage: Int?, val doc: PdfDoc, private val 
 
     // Selection
 
-    /** Selects the word at [x],[y] (page points) on the page on screen. */
-    fun selectWordAt(x: Float, y: Float) {
-        val target = page
+    /** Selects the word at [x],[y] (page points) on [target], a page on screen. */
+    fun selectWordAt(target: Int, x: Float, y: Float) {
+        val shownFrom = page
         loadText(target) { text ->
-            if (target != page) return@loadText
+            if (shownFrom != page) return@loadText
             val i = text.charAt(x, y)
             if (i < 0) return@loadText
             val word = text.wordAt(i)
