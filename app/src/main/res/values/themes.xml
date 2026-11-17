@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="launcher_background">#2E6F6A</color>
+    <color name="paper">#F4EAD5</color>
+
+    <!-- Shown while the app starts: the book icon on the paper color. -->
+    <style name="Theme.Paperleaf.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/paper</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <item name="windowSplashScreenIconBackgroundColor">@color/launcher_background</item>
+        <item name="postSplashScreenTheme">@style/Theme.Paperleaf</item>
+    </style>
+
+    <!-- Only what shows before the first frame; Compose draws the rest. -->
+    <style name="Theme.Paperleaf" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/paper</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>
