@@ -49,6 +49,10 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.automirrored.filled.ListAlt
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.RecordVoiceOver
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
@@ -125,7 +129,12 @@ fun ReaderScreen(book: Book, startPage: Int?, onClose: () -> Unit) {
     }
     val scope = rememberCoroutineScope()
     val state = remember(book.id) { ReaderState(book, startPage, doc, scope) }
-    Reader(state, onClose)
+    // This book reopens by itself next time, unless the reader goes back to the shelf.
+    LaunchedEffect(book.id) { App.prefs.lastBookId = book.id }
+    Reader(state) {
+        App.prefs.lastBookId = -1
+        onClose()
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -150,6 +159,31 @@ private fun Reader(state: ReaderState, onClose: () -> Unit) {
     var color by remember { mutableIntStateOf(HighlightColors.first()) }
 
     LaunchedEffect(changes) { state.reloadNotes() }
+
+    // Read aloud: the voice reads the page, then the page turns and it goes on.
+    val aloudHolder = remember { arrayOfNulls<ReadAloud>(1) }
+    val aloud = remember(state) {
+        ReadAloud(context, scope) {
+            if (state.page < state.pageCount) state.turnPage(true) else aloudHolder[0]?.stop()
+        }.also { aloudHolder[0] = it }
+    }
+    var aloudPage by remember { mutableIntStateOf(0) }
+    fun readAloud() {
+        aloudPage = state.page
+        scope.launch { aloud.readPage(state.page, state.pageText(state.page)) }
+    }
+    DisposableEffect(aloud) { onDispose { aloud.shutdown() } }
+    LaunchedEffect(state.page, aloud.status) {
+        val going = aloud.status == ReadAloud.Status.Reading || aloud.status == ReadAloud.Status.Starting
+        // A new page while reading (turned by the voice or by hand): read it from the top.
+        if (going && aloudPage != state.page) readAloud()
+    }
+    LaunchedEffect(aloud.problem) {
+        aloud.problem?.let {
+            toast(it)
+            aloud.problem = null
+        }
+    }
 
     // Close the file and save the place on the way out.
     DisposableEffect(state) {
@@ -176,9 +210,10 @@ private fun Reader(state: ReaderState, onClose: () -> Unit) {
         onDispose { lifecycle.removeObserver(observer) }
     }
 
-    DisposableEffect(keepAwake) {
+    val stayAwake = keepAwake || aloud.reading
+    DisposableEffect(stayAwake) {
         val window = (context as? Activity)?.window
-        if (keepAwake) window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (stayAwake) window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         onDispose { window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
     }
 
@@ -211,6 +246,7 @@ private fun Reader(state: ReaderState, onClose: () -> Unit) {
             tint = tint,
             curl = turnStyle == PageTurn.Flip,
             onTapMiddle = { chrome = !chrome },
+            spoken = aloud.current,
         )
 
         // Top: the bar, or the search field.
@@ -232,6 +268,13 @@ private fun Reader(state: ReaderState, onClose: () -> Unit) {
                                 if (marked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
                                 "Bookmark page",
                                 tint = if (marked) Poster.terracotta else p.ink,
+                            )
+                        }
+                        IconButton(onClick = { if (aloud.reading) aloud.stop() else readAloud() }) {
+                            Icon(
+                                Icons.Default.RecordVoiceOver,
+                                "Read aloud",
+                                tint = if (aloud.reading) Poster.teal else p.ink,
                             )
                         }
                         IconButton(onClick = { state.searching = true; chrome = true }) { Icon(Icons.Default.Search, "Search in book", tint = p.ink) }
@@ -307,8 +350,19 @@ private fun Reader(state: ReaderState, onClose: () -> Unit) {
                     color = textColor,
                     shadow = Shadow(glow, Offset.Zero, 6f),
                 )
+                if (aloud.reading) {
+                    AloudBar(
+                        aloud = aloud,
+                        onPlay = { if (aloudPage != state.page) readAloud() else aloud.resume() },
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .navigationBarsPadding()
+                            .padding(bottom = 30.dp),
+                    )
+                }
                 Row(
                     Modifier
+                        .align(Alignment.BottomCenter)
                         .fillMaxWidth()
                         .navigationBarsPadding()
                         .padding(start = 20.dp, end = 20.dp, bottom = 6.dp),
@@ -347,6 +401,28 @@ private fun Reader(state: ReaderState, onClose: () -> Unit) {
     if (goTo) GoToPageSheet(state.page, state.pageCount, onDismiss = { goTo = false }) { page ->
         goTo = false
         state.goTo(page)
+    }
+}
+
+/** While reading aloud: pause or go on, the speed, stop. */
+@Composable
+private fun AloudBar(aloud: ReadAloud, onPlay: () -> Unit, modifier: Modifier = Modifier) {
+    val p = LocalPalette.current
+    RetroBox(modifier, color = p.card, radius = 28.dp, shadow = 3.dp) {
+        Row(Modifier.padding(horizontal = 6.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            val paused = aloud.status == ReadAloud.Status.Paused
+            IconButton(onClick = { if (paused) onPlay() else aloud.pause() }) {
+                Icon(if (paused) Icons.Default.PlayArrow else Icons.Default.Pause, if (paused) "Go on reading" else "Pause", tint = p.ink)
+            }
+            Text(
+                "${aloud.rate.toString().removeSuffix(".0")}×",
+                Modifier
+                    .clickable { aloud.nextRate() }
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                style = MaterialTheme.typography.labelLarge,
+            )
+            IconButton(onClick = { aloud.stop() }) { Icon(Icons.Default.Stop, "Stop reading", tint = p.ink) }
+        }
     }
 }
 

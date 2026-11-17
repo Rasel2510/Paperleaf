@@ -52,6 +52,7 @@ fun ReadingSettingsSheet(onDismiss: () -> Unit) {
     val tint by App.prefs.tint.collectAsState()
     val turn by App.prefs.turn.collectAsState()
     val awake by App.prefs.keepAwake.collectAsState()
+    val openLast by App.prefs.openLastBook.collectAsState()
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -140,6 +141,18 @@ fun ReadingSettingsSheet(onDismiss: () -> Unit) {
                 Switch(
                     checked = awake,
                     onCheckedChange = { App.prefs.setKeepAwake(it) },
+                    colors = SwitchDefaults.colors(checkedTrackColor = Poster.terracotta, checkedThumbColor = Poster.onDark),
+                )
+            }
+            Spacer(Modifier.height(20.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Continue reading", style = MaterialTheme.typography.titleLarge)
+                    Text("Open the last book when the app starts.", style = MaterialTheme.typography.bodySmall)
+                }
+                Switch(
+                    checked = openLast,
+                    onCheckedChange = { App.prefs.setOpenLastBook(it) },
                     colors = SwitchDefaults.colors(checkedTrackColor = Poster.terracotta, checkedThumbColor = Poster.onDark),
                 )
             }

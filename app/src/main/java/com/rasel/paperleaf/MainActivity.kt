@@ -80,11 +80,15 @@ class MainActivity : ComponentActivity() {
     /** A PDF another app asked to open ("Open with"). */
     private val incoming = MutableStateFlow<Uri?>(null)
 
+    /** A cold start (not the system recreating the screen): the last book may reopen. */
+    private var freshStart = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         // Not after the system recreated the screen: that one was handled.
         if (savedInstanceState == null) incoming.value = intent.pdfUri()
+        freshStart = savedInstanceState == null
         setContent { Root() }
     }
 
@@ -124,6 +128,20 @@ class MainActivity : ComponentActivity() {
             scope.launch {
                 snackbar.currentSnackbarData?.dismiss()
                 snackbar.showSnackbar(message)
+            }
+        }
+
+        // Continue reading: start in the book that was open when the app was left.
+        LaunchedEffect(Unit) {
+            if (!freshStart || incoming.value != null || !App.prefs.openLastBook.value) return@LaunchedEffect
+            freshStart = false
+            val id = App.prefs.lastBookId
+            if (id <= 0) return@LaunchedEffect
+            val book = App.repo.book(id)
+            if (book != null && java.io.File(book.filePath).exists()) {
+                stack = listOf(Screen.Library, Screen.Reader(book))
+            } else {
+                App.prefs.lastBookId = -1
             }
         }
 

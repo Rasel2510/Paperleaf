@@ -54,6 +54,8 @@ fun PageView(
     curl: Boolean,
     onTapMiddle: () -> Unit,
     modifier: Modifier = Modifier,
+    /** What is being read aloud now: page (1-based) and characters. */
+    spoken: Pair<Int, IntRange>? = null,
 ) {
     val density = LocalDensity.current
     val handleRadius = with(density) { 9f * this.density }
@@ -142,6 +144,16 @@ fun PageView(
         for (m in state.matches) {
             if (m.page != page) continue
             for (r in m.rects) c.drawRect(map(r), if (m === current) currentPaint else found)
+        }
+        // The sentence being read aloud: a soft wash with a line under it.
+        spoken?.takeIf { it.first == page }?.let { (_, range) ->
+            val wash = Paint().apply { color = 0x332E6F6A }
+            val line = Paint().apply { color = 0xCC2E6F6A.toInt() }
+            for (r in state.textOf(page)?.rectsOf(range).orEmpty()) {
+                val m = map(r)
+                c.drawRect(m, wash)
+                c.drawRect(m.left, m.bottom - 2f, m.right, m.bottom, line)
+            }
         }
         // The selection.
         state.selection?.takeIf { it.page == page }?.let {

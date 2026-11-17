@@ -67,6 +67,21 @@ class Prefs(context: Context) {
     private val _sort = MutableStateFlow(enumOr(prefs.getString("library_sort", null), LibrarySort.Recent))
     val sort: StateFlow<LibrarySort> = _sort
 
+    private val _openLast = MutableStateFlow(prefs.getBoolean("open_last_book", true))
+
+    /** Start in the book that was open when the app was left. */
+    val openLastBook: StateFlow<Boolean> = _openLast
+
+    fun setOpenLastBook(value: Boolean) {
+        _openLast.value = value
+        prefs.edit().putBoolean("open_last_book", value).apply()
+    }
+
+    /** The book that was open when the app was left; -1 when the reader went back to the shelf. */
+    var lastBookId: Long
+        get() = prefs.getLong("last_book", -1)
+        set(value) = prefs.edit().putLong("last_book", value).apply()
+
     fun setTint(value: PageTint) {
         _tint.value = value
         prefs.edit().putString("page_tint", value.name).apply()

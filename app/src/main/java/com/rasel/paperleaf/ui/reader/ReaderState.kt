@@ -132,6 +132,14 @@ class ReaderState(val book: Book, startPage: Int?, val doc: PdfDoc, private val 
     /** The text of [page], or null until it is read (then the screen draws again). */
     fun textOf(page: Int): PageText? = texts[page]
 
+    /** The text of [page], read from the file if needed (also kept for drawing). */
+    suspend fun pageText(page: Int): PageText {
+        texts[page]?.let { return it }
+        val text = withContext(Dispatchers.IO) { doc.text(page - 1) }
+        texts[page] = text
+        return text
+    }
+
     private fun loadText(page: Int, then: ((PageText) -> Unit)? = null) {
         if (page !in 1..pageCount) return
         texts[page]?.let { then?.invoke(it); return }
