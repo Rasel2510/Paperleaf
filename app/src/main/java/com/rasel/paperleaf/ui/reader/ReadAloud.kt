@@ -95,6 +95,7 @@ class ReadAloud(context: Context, private val scope: CoroutineScope, private val
             }
             ready = true
             if (status == Status.Starting) speakNext()
+            pendingSay?.let { say(it) }
         }
     }.apply {
         setOnUtteranceProgressListener(object : UtteranceProgressListener() {
@@ -151,6 +152,26 @@ class ReadAloud(context: Context, private val scope: CoroutineScope, private val
         if (status != Status.Reading || id != "$session:$index") return
         index++
         speakNext()
+    }
+
+    private var pendingSay: String? = null
+
+    /**
+     * Says [text] once (a marked word or sentence) and stops. Reading the
+     * pages, if it was going on, stops first.
+     */
+    fun say(text: String) {
+        val words = text.replace(Regex("""-\n"""), "").replace(Regex("""\s+"""), " ").trim()
+        if (words.isEmpty()) return
+        if (!ready) {
+            pendingSay = words
+            return
+        }
+        pendingSay = null
+        if (status != Status.Off) stop()
+        session++
+        tts.setSpeechRate(rate)
+        tts.speak(words, TextToSpeech.QUEUE_FLUSH, null, "say:$session")
     }
 
     fun pause() {

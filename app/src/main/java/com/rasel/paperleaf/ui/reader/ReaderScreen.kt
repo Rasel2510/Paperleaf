@@ -53,6 +53,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
@@ -331,6 +332,7 @@ private fun Reader(state: ReaderState, onClose: () -> Unit) {
                         toast("Word saved")
                         scope.launch { runCatching { state.saveSelectedWord() }.onFailure { toast("Could not save the word.") } }
                     },
+                    onSpeak = { state.selectedText()?.let { aloud.say(it) } },
                     onCopy = {
                         state.selectedText()?.let { text ->
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -476,6 +478,7 @@ private fun SelectionBar(
     onColor: (Int) -> Unit,
     onHighlight: () -> Unit,
     onSave: () -> Unit,
+    onSpeak: () -> Unit,
     onCopy: () -> Unit,
 ) {
     val p = LocalPalette.current
@@ -517,6 +520,7 @@ private fun SelectionBar(
                     )
                 }
                 Spacer(Modifier.weight(1f))
+                IconButton(onClick = onSpeak) { Icon(Icons.AutoMirrored.Filled.VolumeUp, "Read aloud the marked text", tint = p.ink) }
                 IconButton(onClick = onCopy) { Icon(Icons.Default.ContentCopy, "Copy", Modifier.size(22.dp), tint = p.ink) }
                 IconButton(onClick = { state.clearSelection() }) { Icon(Icons.Default.Close, "Close", tint = p.ink) }
             }
