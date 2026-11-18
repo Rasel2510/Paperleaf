@@ -167,7 +167,7 @@ class ReaderState(val book: Book, startPage: Int?, val doc: PdfDoc, private val 
     var spread by mutableStateOf(false)
         private set
 
-    private val step: Int get() = if (spread) 2 else 1
+    val step: Int get() = if (spread) 2 else 1
 
     private fun spreadStart(p: Int) = if (spread) p - (p - 1) % 2 else p
 
@@ -240,6 +240,41 @@ class ReaderState(val book: Book, startPage: Int?, val doc: PdfDoc, private val 
             pivotY = (grabY + dy / height / 2).coerceIn(0f, 1f)
             tilt = (dy / (width * 0.6f)).coerceIn(-0.45f, 0.45f)
         }
+    }
+
+    /** Zoomed in at the page's edge: how far the page is pulled aside to turn (px, minus = toward the next). */
+    var zoomPull by mutableFloatStateOf(0f)
+
+    /** Pulled far enough that letting go turns the page. */
+    fun zoomArmed(width: Float): Boolean {
+        if (abs(zoomPull) < width * 0.1f) return false
+        val to = page + if (zoomPull < 0) step else -step
+        return to in 1..pageCount
+    }
+
+    fun releaseZoomPull() {
+        val from = zoomPull
+        if (from == 0f) return
+        scope.launch {
+            animate(from, 0f, animationSpec = tween(200)) { v, _ -> zoomPull = v }
+        }
+    }
+
+    /**
+     * Turns while zoomed: the zoom stays, and the new page shows where reading
+     * starts (top left) going forward, or where it ends (bottom right) going back.
+     */
+    fun turnZoomed(forward: Boolean, width: Float, height: Float) {
+        if (turn != null) return
+        val to = page + if (forward) step else -step
+        if (to !in 1..pageCount) return
+        val z = zoom
+        shown(to)
+        zoom = z
+        val maxX = (z - 1) * width / 2
+        val maxY = (z - 1) * height / 2
+        pan = if (forward) Offset(maxX, maxY) else Offset(-maxX, -maxY)
+        images.sharpen((visiblePages.first - 1)..(visiblePages.last - 1), z)
     }
 
     fun pushEdge(px: Float) {

@@ -196,6 +196,42 @@ fun PageView(
         }
     }
 
+    val hintSize = with(density) { 15f * fontScale * this.density }
+
+    /** How far the zoomed page is drawn aside: small when there is no page there. */
+    fun pullShift(w: Float): Float {
+        val p = state.zoomPull
+        if (p == 0f) return 0f
+        val to = state.page + (if (p < 0) 1 else -1) * (state.step)
+        val limit = if (to in 1..state.pageCount) w * 0.16f else 24f
+        return p.coerceIn(-limit, limit)
+    }
+
+    /** "Next page" / "Previous page" in the space the pulled page leaves. */
+    fun drawPullHint(c: Canvas, w: Float, h: Float) {
+        val shift = pullShift(w)
+        if (abs(shift) < 12f || !state.zoomArmed(w) && abs(shift) < w * 0.04f) return
+        val forward = shift < 0
+        val to = state.page + (if (forward) 1 else -1) * state.step
+        if (to !in 1..state.pageCount) return
+        val armed = state.zoomArmed(w)
+        val ink = if (tint.isDark) 0xFFFFFF else 0x000000
+        val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = (if (armed) 0xDD shl 24 else 0x77 shl 24) or ink
+            textSize = hintSize
+            textAlign = Paint.Align.CENTER
+            isFakeBoldText = armed
+        }
+        val gap = abs(shift)
+        val x = if (forward) w - gap / 2 else gap / 2
+        val lines = if (forward) listOf("Next", "page", "›") else listOf("‹", "Previous", "page")
+        var y = h / 2 - hintSize * 1.2f
+        c.save()
+        c.drawRect(if (forward) w - gap else 0f, 0f, if (forward) w else gap, h, Paint().apply { color = tint.blank })
+        if (gap > hintSize * 2.2f) for (line in lines) { c.drawText(line, x, y, text); y += hintSize * 1.3f }
+        c.restore()
+    }
+
     Canvas(
         modifier
             .fillMaxSize()
@@ -330,31 +366,46 @@ fun PageView(
                                 return@awaitEachGesture
                             }
                             if (state.zoom > 1.05f) {
-                                // Zoomed: the page pans. A quick swipe that starts at the
-                                // page's edge turns the page.
+                                // Zoomed: the page pans. A swipe that starts at the page's
+                                // edge and keeps going past it pulls the page aside (with a
+                                // hint); let go far enough, or flick, and the page turns,
+                                // staying zoomed. A pan that only reaches the edge never turns.
                                 val maxX = (state.zoom - 1) * w / 2
                                 val startPan = state.pan
+                                val atLeft = startPan.x >= maxX - 1
+                                val atRight = startPan.x <= -maxX + 1
                                 var previous = start
-                                var end = start
+                                var pull = 0f
                                 while (true) {
                                     val e = awaitPointerEvent()
                                     val ch = e.changes.firstOrNull { it.id == down.id } ?: break
                                     if (e.changes.count { it.pressed } > 1) break
                                     tracker.addPosition(ch.uptimeMillis, ch.position)
-                                    if (!ch.pressed) { end = ch.position; break }
-                                    state.pan = clampPan(state.pan + (ch.position - previous), state.zoom, w, h)
+                                    if (!ch.pressed) break
+                                    val wanted = state.pan + (ch.position - previous)
+                                    val clamped = clampPan(wanted, state.zoom, w, h)
+                                    val past = wanted.x - clamped.x
+                                    // Only past the edge the swipe began at; back toward it undoes the pull.
+                                    pull = when {
+                                        atRight && (pull < 0f || past < 0f) -> minOf(0f, pull + (ch.position.x - previous.x))
+                                        atLeft && (pull > 0f || past > 0f) -> maxOf(0f, pull + (ch.position.x - previous.x))
+                                        else -> 0f
+                                    }
+                                    state.pan = if (pull != 0f) Offset(state.pan.x, clamped.y) else clamped
+                                    state.zoomPull = pull * 0.5f
                                     previous = ch.position
-                                    end = ch.position
                                     ch.consume()
                                 }
                                 val v = tracker.calculateVelocity()
-                                val atLeft = startPan.x >= maxX - 1
-                                val atRight = startPan.x <= -maxX + 1
-                                if (abs(v.x) > 600 && abs(v.y) < 800) {
-                                    if (v.x < 0 && atRight) state.turnPage(true)
-                                    if (v.x > 0 && atLeft) state.turnPage(false)
+                                val flick = abs(v.x) > 600 && abs(v.y) < 800
+                                val forward = when {
+                                    atRight && (state.zoomArmed(w) && pull < 0 || flick && v.x < 0) -> true
+                                    atLeft && (state.zoomArmed(w) && pull > 0 || flick && v.x > 0) -> false
+                                    else -> null
                                 }
-                                state.images.sharpen((state.visiblePages.first - 1)..(state.visiblePages.last - 1), state.zoom)
+                                state.releaseZoomPull()
+                                if (forward != null) state.turnZoomed(forward, w, h)
+                                else state.images.sharpen((state.visiblePages.first - 1)..(state.visiblePages.last - 1), state.zoom)
                                 return@awaitEachGesture
                             }
                             // At normal size: sideways turns, up and down does nothing.
@@ -424,12 +475,13 @@ fun PageView(
                     drawSlide(c, w, h, state.progress, turn.forward, spreadOf(turn.from, false), spreadOf(turn.to, false), tint.blank)
                 } else {
                     c.save()
-                    c.translate(state.edgePush, 0f)
+                    c.translate(state.edgePush + pullShift(w), 0f)
                     c.translate(state.pan.x + w / 2, state.pan.y + h / 2)
                     c.scale(state.zoom, state.zoom)
                     c.translate(-w / 2, -h / 2)
                     spreadOf(state.page, true)(c)
                     c.restore()
+                    drawPullHint(c, w, h)
                     handles(w, h)?.let { (a, b) ->
                         val knob = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF2E6F6A.toInt() }
                         c.drawCircle(a.x, a.y + handleRadius, handleRadius, knob)
@@ -447,12 +499,13 @@ fun PageView(
             } else {
                 c.drawColor(tint.blank)
                 c.save()
-                c.translate(state.edgePush, 0f)
+                c.translate(state.edgePush + pullShift(w), 0f)
                 c.translate(state.pan.x + w / 2, state.pan.y + h / 2)
                 c.scale(state.zoom, state.zoom)
                 c.translate(-w / 2, -h / 2)
                 drawPage(c, state.page, area, true)
                 c.restore()
+                drawPullHint(c, w, h)
                 handles(w, h)?.let { (a, b) ->
                     val knob = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF2E6F6A.toInt() }
                     c.drawCircle(a.x, a.y + handleRadius, handleRadius, knob)
