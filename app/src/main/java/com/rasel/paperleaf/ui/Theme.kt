@@ -149,6 +149,12 @@ fun RetroBox(
     radius: Dp = 6.dp,
     shadow: Dp = 4.dp,
     onClick: (() -> Unit)? = null,
+    /**
+     * Cut the content to the rounded corners. Off for long scrolling lists:
+     * a clip per card is slow on small phones' graphics chips, and content
+     * that keeps inside the corners does not need it.
+     */
+    clipContent: Boolean = true,
     content: @Composable BoxScope.() -> Unit,
 ) {
     val p = LocalPalette.current
@@ -165,8 +171,7 @@ fun RetroBox(
         }
         Box(
             Modifier
-                .clip(shape)
-                .background(color)
+                .then(if (clipContent) Modifier.clip(shape).background(color) else Modifier.background(color, shape))
                 .border(2.dp, p.ink, shape)
                 .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
             content = content,

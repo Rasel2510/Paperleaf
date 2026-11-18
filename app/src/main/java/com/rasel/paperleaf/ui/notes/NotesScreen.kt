@@ -15,8 +15,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.IntrinsicSize
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -49,6 +47,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
@@ -71,6 +75,8 @@ import com.rasel.paperleaf.ui.ScreenBar
 import kotlinx.coroutines.launch
 
 private data class Entry(
+    /** Stays the same for the same item (the list keeps each row's place when others change). */
+    val key: Any,
     val page: Int,
     val title: String,
     val subtitle: String? = null,
@@ -125,8 +131,10 @@ fun NotesScreen(book: Book, onBack: () -> Unit, onOpenPage: (Int) -> Unit) {
                 unit = "highlight",
                 separator = "\n\n",
                 // Newest first.
-                entries = highlights?.sortedByDescending { it.id }?.map { h ->
-                    Entry(h.page, h.text, accent = h.color?.let { Color(it) }, onDelete = { confirm = h })
+                entries = remember(highlights) {
+                    highlights?.sortedByDescending { it.id }?.map { h ->
+                        Entry("h${h.id}", h.page, h.text, accent = h.color?.let { Color(it) }, onDelete = { confirm = h })
+                    }
                 },
                 onOpenPage = onOpenPage,
             )
@@ -135,7 +143,7 @@ fun NotesScreen(book: Book, onBack: () -> Unit, onOpenPage: (Int) -> Unit) {
                 accent = Poster.terracotta,
                 unit = null,
                 entries = bookmarks?.sorted()?.map { page ->
-                    Entry(page, "Page $page", onDelete = { scope.launch { App.repo.setBookmark(book.id, page, false) } })
+                    Entry("b$page", page, "Page $page", onDelete = { scope.launch { App.repo.setBookmark(book.id, page, false) } })
                 },
                 onOpenPage = onOpenPage,
             )
@@ -151,6 +159,7 @@ fun NotesScreen(book: Book, onBack: () -> Unit, onOpenPage: (Int) -> Unit) {
                 } ?: emptyList(),
                 entries = words?.map { w ->
                     Entry(
+                        key = "w${w.id}",
                         page = w.page,
                         title = w.word,
                         subtitle = w.meaning,
@@ -255,12 +264,26 @@ private fun EntryList(
             verticalArrangement = Arrangement.spacedBy(16.dp),
             modifier = Modifier.navigationBarsPadding(),
         ) {
-            items(items) { e ->
-                RetroBox(Modifier.fillMaxWidth(), shadow = 3.dp) {
+            items(items, key = { it.key }) { e ->
+                RetroBox(Modifier.fillMaxWidth(), shadow = 3.dp, clipContent = false) {
+                    val strip = e.accent ?: accent
                     Row(
                         Modifier
                             .fillMaxWidth()
-                            .height(IntrinsicSize.Min)
+                            // The color strip and its ink line are drawn, not laid out: the
+                            // row is then measured once (a strip as tall as the row needed two).
+                            // Its outer corners are rounded like the card's (the card does not clip).
+                            .drawBehind {
+                                val w = 10.dp.toPx()
+                                val r = CornerRadius(6.dp.toPx())
+                                drawPath(
+                                    Path().apply {
+                                        addRoundRect(RoundRect(0f, 0f, w, size.height, topLeftCornerRadius = r, bottomLeftCornerRadius = r))
+                                    },
+                                    strip,
+                                )
+                                drawRect(p.ink, topLeft = Offset(w, 0f), size = Size(2.dp.toPx(), size.height))
+                            }
                             .combinedClickable(
                                 onClick = { onOpenPage(e.page) },
                                 onLongClick = if (unit != null) {
@@ -269,9 +292,7 @@ private fun EntryList(
                             ),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Box(Modifier.width(10.dp).fillMaxHeight().background(e.accent ?: accent))
-                        Box(Modifier.width(2.dp).fillMaxHeight().background(p.ink))
-                        Column(Modifier.weight(1f).padding(start = 14.dp, top = 12.dp, end = 4.dp, bottom = 12.dp)) {
+                        Column(Modifier.weight(1f).padding(start = 26.dp, top = 12.dp, end = 4.dp, bottom = 12.dp)) {
                             Text(e.title, maxLines = 4, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
                             if (e.subtitle != null) {
                                 Spacer(Modifier.height(4.dp))
