@@ -299,8 +299,8 @@ private fun Reader(state: ReaderState, onClose: () -> Unit) {
                                 state.zoom = 1f
                                 state.pan = Offset.Zero
                             } else {
-                                state.zoom = 2f
-                                state.images.sharpen(state.page - 1, 2f)
+                                state.zoom = 2f * state.zoomBoost
+                                state.images.sharpen((state.visiblePages.first - 1)..(state.visiblePages.last - 1), state.zoom)
                             }
                         }) {
                             Icon(if (state.zoom > 1.05f) Icons.Default.ZoomOut else Icons.Default.ZoomIn, "Zoom", tint = p.ink)

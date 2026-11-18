@@ -203,6 +203,15 @@ fun PageView(
                 // Held sideways: two pages, like an open book.
                 state.setSpreadMode(it.width > it.height)
                 state.images.setViewport(it.width, it.height)
+                state.zoomBoost = if (state.spread && state.pageCount > 0) {
+                    val w = it.width.toFloat()
+                    val h = it.height.toFloat()
+                    val size = state.doc.pageSize((state.page - 1).coerceIn(0, state.pageCount - 1))
+                    // One page with the phone upright: fitted into the screen turned (h × w).
+                    val single = minOf(h / size.width, w / size.height)
+                    val double = spreadRects(state.page, w, h).first.width() / size.width
+                    (single / double).coerceIn(1f, 3f)
+                } else 1f
             }
             .pointerInput(state) {
                 awaitEachGesture {
@@ -288,7 +297,7 @@ fun PageView(
                                 val panChange = e.calculatePan()
                                 val centroid = e.calculateCentroid(useCurrent = true)
                                 val old = state.zoom
-                                val next = (old * zoomChange).coerceIn(1f, 3f)
+                                val next = (old * zoomChange).coerceIn(1f, state.maxZoom)
                                 val factor = next / old
                                 val center = Offset(w / 2, h / 2)
                                 // Keep the point under the fingers in place.
@@ -301,7 +310,7 @@ fun PageView(
                                 state.zoom = 1f
                                 state.pan = Offset.Zero
                             }
-                            state.images.sharpen(state.page - 1, state.zoom)
+                            state.images.sharpen((state.visiblePages.first - 1)..(state.visiblePages.last - 1), state.zoom)
                         }
 
                         "move" -> {
@@ -345,7 +354,7 @@ fun PageView(
                                     if (v.x < 0 && atRight) state.turnPage(true)
                                     if (v.x > 0 && atLeft) state.turnPage(false)
                                 }
-                                state.images.sharpen(state.page - 1, state.zoom)
+                                state.images.sharpen((state.visiblePages.first - 1)..(state.visiblePages.last - 1), state.zoom)
                                 return@awaitEachGesture
                             }
                             // At normal size: sideways turns, up and down does nothing.

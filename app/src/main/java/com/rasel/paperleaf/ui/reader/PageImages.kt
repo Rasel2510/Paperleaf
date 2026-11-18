@@ -15,6 +15,7 @@ import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 /**
  * Bitmaps of the pages around the reader, drawn ahead so a turn never waits
@@ -36,18 +37,23 @@ class PageImages(private val doc: PdfDoc, private val scope: CoroutineScope) {
     private var height = 0
     private var center = 0
 
-    private var sharp: Pair<Int, Bitmap>? = null
+    /** Sharper copies of the pages on screen (both of two), for zoom [sharpScale]. */
+    private val sharp = HashMap<Int, Bitmap>()
     private var sharpScale = 1f
     private var sharpJob: Job? = null
+    /** Goes up when the viewport changes, so a bitmap drawn for the old size is not kept. */
+    private var generation = 0
 
     /** The area pages are fitted into, in pixels. Bitmaps of another size are dropped. */
     fun setViewport(w: Int, h: Int) {
         if (w == width && h == height) return
         width = w
         height = h
+        generation++
         cache.clear()
         pending.clear()
-        sharp = null
+        sharpJob?.cancel()
+        sharp.clear()
         version++
         focus(center)
     }
@@ -60,7 +66,7 @@ class PageImages(private val doc: PdfDoc, private val scope: CoroutineScope) {
     }
 
     /** A sharper bitmap of page [index] for zoom [scale], if one is ready. */
-    fun sharp(index: Int): Bitmap? = sharp?.takeIf { it.first == index }?.second
+    fun sharp(index: Int): Bitmap? = sharp[index]
 
     /** Draw the pages around [index] first; forget far ones. */
     fun focus(index: Int) {
@@ -69,32 +75,46 @@ class PageImages(private val doc: PdfDoc, private val scope: CoroutineScope) {
         far.forEach { cache.remove(it) }
         // With two pages on screen, the pages of the spreads either side too.
         for (i in listOf(index, index + 1, index - 1, index + 2, index + 3, index - 2)) request(i)
-        if (sharp?.first != index) sharp = null
+        sharp.keys.retainAll(setOf(index, index + 1))
     }
 
-    /** Make a sharp copy of [index] for zoom [scale] (after a pinch settles). */
-    fun sharpen(index: Int, scale: Float) {
+    /** Make sharp copies of [pages] (0-based: every page on screen) for zoom [scale] (after a pinch settles). */
+    fun sharpen(pages: IntRange, scale: Float) {
         if (scale <= 1.05f) {
-            sharp = null
+            sharpJob?.cancel()
+            sharp.clear()
             return
         }
-        if (sharp?.first == index && abs(sharpScale - scale) < 0.25f) return
+        // Up to the largest zoom (higher for two pages), but no bitmap past ~16M pixels.
+        val s = min(scale, 9f)
+        val wanted = pages.filter { it in 0 until doc.pageCount }
+        val sameScale = abs(sharpScale - s) < 0.25f
+        if (sameScale && wanted.all { it in sharp }) return
         sharpJob?.cancel()
+        if (sameScale) sharp.keys.retainAll(wanted.toSet()) else sharp.clear()
+        val gen = generation
         sharpJob = scope.launch {
-            val fit = fit(index, RectF(0f, 0f, width.toFloat(), height.toFloat()))
-            val s = min(scale, 3f)
-            val bitmap = withContext(renderer) {
-                doc.render(index, (fit.width() * s).roundToInt(), (fit.height() * s).roundToInt())
-            } ?: return@launch
-            sharp = index to bitmap
-            sharpScale = s
-            version++
+            for (index in wanted) {
+                if (index in sharp) continue
+                val fit = fit(index, RectF(0f, 0f, width.toFloat(), height.toFloat()))
+                val k = min(s, sqrt(16_000_000f / (fit.width() * fit.height()).coerceAtLeast(1f)))
+                val bitmap = runCatching {
+                    withContext(renderer) {
+                        doc.render(index, (fit.width() * k).roundToInt(), (fit.height() * k).roundToInt())
+                    }
+                }.getOrNull() ?: return@launch
+                if (gen != generation) return@launch
+                sharp[index] = bitmap
+                sharpScale = s
+                version++
+            }
         }
     }
 
     private fun request(index: Int) {
         if (index !in 0 until doc.pageCount || width == 0 || index in cache || index in pending) return
         pending += index
+        val gen = generation
         scope.launch {
             val fit = fit(index, RectF(0f, 0f, width.toFloat(), height.toFloat()))
             val bitmap = runCatching {
@@ -102,6 +122,8 @@ class PageImages(private val doc: PdfDoc, private val scope: CoroutineScope) {
                     doc.render(index, fit.width().roundToInt().coerceAtLeast(1), fit.height().roundToInt().coerceAtLeast(1))
                 }
             }.getOrNull()
+            // Drawn for a viewport that has since changed (the phone turned): not kept.
+            if (gen != generation) return@launch
             pending -= index
             if (bitmap != null && fit.width() > 0) {
                 cache[index] = bitmap

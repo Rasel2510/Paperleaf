@@ -70,6 +70,16 @@ class ReaderState(val book: Book, startPage: Int?, val doc: PdfDoc, private val 
     var zoom by mutableFloatStateOf(1f)
     var pan by mutableStateOf(Offset.Zero)
 
+    /**
+     * How much more two pages may zoom than one: each of two pages is drawn
+     * smaller than a single page (phone upright), so the same text size at
+     * full zoom needs a larger zoom. 1 for a single page.
+     */
+    var zoomBoost = 1f
+
+    /** The largest zoom: the same text size for one page and for two. */
+    val maxZoom: Float get() = 3f * zoomBoost
+
     // Notes of this book
     var highlights by mutableStateOf<List<Highlight>>(emptyList())
         private set
