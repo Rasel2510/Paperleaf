@@ -53,6 +53,7 @@ fun ReadingSettingsSheet(onDismiss: () -> Unit) {
     val turn by App.prefs.turn.collectAsState()
     val awake by App.prefs.keepAwake.collectAsState()
     val openLast by App.prefs.openLastBook.collectAsState()
+    val inPdf by App.prefs.highlightsInPdf.collectAsState()
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -153,6 +154,22 @@ fun ReadingSettingsSheet(onDismiss: () -> Unit) {
                 Switch(
                     checked = openLast,
                     onCheckedChange = { App.prefs.setOpenLastBook(it) },
+                    colors = SwitchDefaults.colors(checkedTrackColor = Poster.terracotta, checkedThumbColor = Poster.onDark),
+                )
+            }
+            Spacer(Modifier.height(20.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Highlights in the PDF", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        if (inPdf) "Saved inside the book's file too: kept if the app is removed, seen by other reader apps."
+                        else "Kept only in the app: removed with the app; the PDF file is not changed.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Switch(
+                    checked = inPdf,
+                    onCheckedChange = { App.prefs.setHighlightsInPdf(it) },
                     colors = SwitchDefaults.colors(checkedTrackColor = Poster.terracotta, checkedThumbColor = Poster.onDark),
                 )
             }

@@ -5,6 +5,9 @@ import com.rasel.paperleaf.core.cleanBookTitle
 import com.rasel.paperleaf.core.csvField
 import com.rasel.paperleaf.core.dueLabel
 import com.rasel.paperleaf.core.formatDuration
+import com.rasel.paperleaf.core.highlightColorForFile
+import com.rasel.paperleaf.core.highlightColorFromFile
+import com.rasel.paperleaf.core.highlightPalette
 import com.rasel.paperleaf.core.nextReview
 import com.rasel.paperleaf.core.readingStats
 import com.rasel.paperleaf.data.ReadingDay
@@ -90,5 +93,17 @@ class LogicTest {
         assertNull(Dictionary.lookupWord("two words"))
         assertEquals("(noun) a sign", Dictionary.parseDefinition("""[{"meanings":[{"partOfSpeech":"noun","definitions":[{"definition":"a sign"}]}]}]"""))
         assertNull(Dictionary.parseDefinition("not json"))
+    }
+
+    @Test
+    fun highlightColorsComeBackFromTheFile() {
+        for (c in highlightPalette) {
+            // Saved soft (as the page shows it), read back as the palette color.
+            assertEquals(c, highlightColorFromFile(highlightColorForFile(c)))
+        }
+        // A color from another app is kept.
+        assertEquals(0xFFFFFF00.toInt(), highlightColorFromFile(0xFFFFFF00.toInt()))
+        // One of ours from before (saved at full strength) too.
+        assertEquals(0xFF8B2CFF.toInt(), highlightColorFromFile(0xFF8B2CFF.toInt()))
     }
 }

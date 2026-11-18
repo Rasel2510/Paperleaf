@@ -22,4 +22,10 @@ object App {
     lateinit var prefs: Prefs
     lateinit var repo: Repository
     lateinit var library: Library
+
+    /** "All files access" was asked for in this run of the app (not again until the next). */
+    var fileAccessAsked = false
+
+    /** Work that must finish even when the screen that started it closes (saving into files). */
+    val background = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
 }

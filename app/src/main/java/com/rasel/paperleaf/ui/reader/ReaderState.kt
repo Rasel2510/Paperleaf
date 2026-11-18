@@ -120,6 +120,12 @@ class ReaderState(val book: Book, startPage: Int?, val doc: PdfDoc, private val 
             if (book.pageCount != pageCount) App.repo.savePageCount(book.id, pageCount)
             toc = withContext(Dispatchers.IO) { doc.outline() }
             importMarks()
+            // From here on, changes to the highlights are saved into the book's file;
+            // also those not saved last time (the app stopped first, say). A book
+            // never saved into holds what its file had.
+            val rows = App.repo.highlights(book.id)
+            fileMarks = App.library.savedMarks(book.id) ?: marksKey(rows).also { App.library.setSavedMarks(book.id, it) }
+            saveMarksToFile(rows)
         }
         if (startPage != null) scheduleSave()
     }
@@ -136,6 +142,54 @@ class ReaderState(val book: Book, startPage: Int?, val doc: PdfDoc, private val 
             }
             highlights = rows
             bookmarks = App.repo.bookmarkPages(book.id)
+            saveMarksToFile(rows)
+        }
+    }
+
+    // Highlights saved into the file the book came from (so they outlive the app)
+
+    /** The highlights the book's file holds; null until those in it were read in. */
+    private var fileMarks: String? = null
+    private var fileJob: Job? = null
+
+    private fun marksKey(rows: List<Highlight>) = rows.joinToString("|") { "${it.id}:${it.color}:${it.rects}" }
+
+    /**
+     * The book's file belongs to another app (a download, say): saving into it
+     * needs "All files access". The reader asks once per run of the app.
+     */
+    var askFileAccess by mutableStateOf(false)
+        private set
+    private var unsaved: List<Highlight>? = null
+
+    fun dismissFileAccess() {
+        askFileAccess = false
+        App.fileAccessAsked = true
+    }
+
+    /** A moment after the highlights stop changing, they go into the file (not on every tap). */
+    private fun saveMarksToFile(rows: List<Highlight>, now: Boolean = false) {
+        // Off: the file is left as it is (turned on later, it catches up when the book opens).
+        if (book.sourceUri == null || !App.prefs.highlightsInPdf.value) return
+        val known = fileMarks ?: return
+        val key = marksKey(rows)
+        if (key == known) return
+        fileJob?.cancel()
+        // App-wide: still saved when the reader is closed right after a change.
+        fileJob = App.background.launch {
+            if (!now) delay(1500)
+            when (App.library.saveHighlightsToSource(book, doc, rows)) {
+                com.rasel.paperleaf.core.Library.SaveResult.Saved -> {
+                    fileMarks = key
+                    App.library.setSavedMarks(book.id, key)
+                    unsaved = null
+                }
+                com.rasel.paperleaf.core.Library.SaveResult.NeedsFileAccess -> {
+                    unsaved = rows
+                    if (!App.fileAccessAsked) withContext(Dispatchers.Main) { askFileAccess = true }
+                }
+                com.rasel.paperleaf.core.Library.SaveResult.Failed -> Unit
+            }
         }
     }
 
@@ -519,6 +573,13 @@ class ReaderState(val book: Book, startPage: Int?, val doc: PdfDoc, private val 
     /** Coming back to the app: time away is not reading time. */
     fun resumed() {
         lastActivity = System.currentTimeMillis()
+        // Back from the settings screen with "All files access" on: save what is waiting.
+        unsaved?.let { rows ->
+            if (App.library.hasFileAccess()) {
+                askFileAccess = false
+                saveMarksToFile(rows, now = true)
+            }
+        }
     }
 
     // Highlights made elsewhere

@@ -119,7 +119,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /** Highlight colors; the first is the default. Strong, so they show on tinted paper. */
-val HighlightColors = listOf(0xFFFF9100.toInt(), 0xFF00C853.toInt(), 0xFFF50057.toInt(), 0xFF8B2CFF.toInt())
+val HighlightColors = com.rasel.paperleaf.core.highlightPalette
 
 @Composable
 fun ReaderScreen(book: Book, startPage: Int?, onClose: () -> Unit) {
@@ -241,6 +241,43 @@ private fun Reader(state: ReaderState, onClose: () -> Unit) {
                 toast(if (ok) "Annotated PDF saved. Open it in any PDF reader." else "Could not save the annotated PDF.")
             }
         }
+    }
+
+    // Before Android 11 the storage permission is asked in place.
+    val askStorage = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { state.resumed() }
+
+    if (state.askFileAccess) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { state.dismissFileAccess() },
+            containerColor = p.card,
+            title = { Text("Keep highlights in the PDF?", style = MaterialTheme.typography.titleLarge) },
+            text = {
+                Text(
+                    "This PDF belongs to another app (it was downloaded), so Paperleaf needs \"All files access\" " +
+                        "to save your highlights inside it. They then stay with the book, also if Paperleaf is " +
+                        "removed, and other reader apps show them too.",
+                )
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    state.dismissFileAccess()
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                        val intent = android.content.Intent(
+                            android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                            android.net.Uri.parse("package:${context.packageName}"),
+                        )
+                        runCatching { context.startActivity(intent) }.onFailure {
+                            context.startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+                        }
+                    } else {
+                        askStorage.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                    }
+                }) { Text("ALLOW", color = p.ink) }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { state.dismissFileAccess() }) { Text("NOT NOW", color = p.ink) }
+            },
+        )
     }
 
     BackHandler {

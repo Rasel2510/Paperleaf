@@ -1,6 +1,17 @@
 package com.rasel.paperleaf.core
 
+import android.content.ContentUris
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.media.MediaScannerConnection
+import android.os.Build
+import android.os.Environment
+import android.provider.DocumentsContract
+import android.provider.MediaStore
+import android.util.Log
+import com.rasel.paperleaf.data.Highlight
+import com.rasel.paperleaf.pdf.PdfDoc
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.pdf.PdfRenderer
@@ -10,9 +21,11 @@ import android.provider.OpenableColumns
 import com.rasel.paperleaf.data.Book
 import com.rasel.paperleaf.data.Repository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
+import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.zip.ZipEntry
@@ -33,9 +46,12 @@ class Library(private val context: Context, private val repo: Repository) {
     /** Copies the PDF behind [uri] onto the shelf; returns the new book. */
     suspend fun import(uri: Uri): Book {
         val name = displayName(uri) ?: "Book.pdf"
-        return importStream(name) {
+        val book = importStream(name) {
             context.contentResolver.openInputStream(uri) ?: throw NotAPdfException()
         }
+        val source = sourceOf(uri) ?: return book
+        repo.setSourceUri(book.id, source)
+        return book.copy(sourceUri = source)
     }
 
     /**
@@ -45,9 +61,146 @@ class Library(private val context: Context, private val repo: Repository) {
      */
     suspend fun importIncoming(uri: Uri): Book {
         val title = titleFor(displayName(uri) ?: "Book.pdf")
-        repo.books().firstOrNull { it.title == title }?.let { return it }
+        repo.books().firstOrNull { it.title == title }?.let { book ->
+            if (book.sourceUri != null) return book
+            val source = sourceOf(uri) ?: return book
+            repo.setSourceUri(book.id, source)
+            return book.copy(sourceUri = source)
+        }
         return import(uri)
     }
+
+    /**
+     * Where the book's own file is, for saving highlights into it: its place
+     * on the phone ("file://…") when that can be found, else [uri] itself
+     * (kept readable and writable after a restart when the file's app allows).
+     */
+    private fun sourceOf(uri: Uri): String? {
+        runCatching {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+            )
+        }
+        realPath(uri)?.let { return Uri.fromFile(File(it)).toString() }
+        return uri.toString()
+    }
+
+    /** The file on the phone's storage behind [uri], when there is one. */
+    private fun realPath(uri: Uri): String? = runCatching {
+        if (uri.scheme == "file") return@runCatching uri.path
+        var mediaUri: Uri? = null
+        if (DocumentsContract.isDocumentUri(context, uri)) {
+            val id = DocumentsContract.getDocumentId(uri)
+            when (uri.authority) {
+                "com.android.externalstorage.documents" -> {
+                    val volume = id.substringBefore(':')
+                    val path = id.substringAfter(':')
+                    if (volume.equals("primary", ignoreCase = true)) {
+                        return@runCatching File(Environment.getExternalStorageDirectory(), path).path
+                    }
+                    return@runCatching "/storage/$volume/$path"
+                }
+                "com.android.providers.downloads.documents" -> {
+                    if (id.startsWith("raw:")) return@runCatching id.removePrefix("raw:")
+                    id.substringAfter("msf:", "").toLongOrNull()?.let {
+                        mediaUri = ContentUris.withAppendedId(MediaStore.Files.getContentUri("external"), it)
+                    }
+                }
+                "com.android.providers.media.documents" -> {
+                    id.substringAfter(':').toLongOrNull()?.let {
+                        mediaUri = ContentUris.withAppendedId(MediaStore.Files.getContentUri("external"), it)
+                    }
+                }
+            }
+        } else if (uri.authority == MediaStore.AUTHORITY) {
+            mediaUri = uri
+        }
+        @Suppress("DEPRECATION")
+        val column = MediaStore.MediaColumns.DATA
+        context.contentResolver.query(mediaUri ?: uri, arrayOf(column), null, null, null)?.use { c ->
+            if (c.moveToFirst() && !c.isNull(0)) c.getString(0) else null
+        }
+    }.getOrNull()?.takeIf { it.isNotBlank() && File(it).exists() }
+
+    private val fileMarks = context.getSharedPreferences("file_marks", Context.MODE_PRIVATE)
+
+    /** What was last saved into book [id]'s file (null: nothing yet, the file is as it came). */
+    fun savedMarks(id: Long): String? = fileMarks.getString("$id", null)
+
+    fun setSavedMarks(id: Long, key: String) = fileMarks.edit().putString("$id", key).apply()
+
+    /** May the app write to any file on the phone's storage ("All files access")? */
+    fun hasFileAccess(): Boolean =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            context.checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+        }
+
+    enum class SaveResult { Saved, NeedsFileAccess, Failed }
+
+    /**
+     * Saves [highlights] into the file the book came from, as real PDF
+     * highlights (like other reader apps do), so they are still there when
+     * the book is added again, after the app was removed. Highlights already
+     * in that file are replaced; everything else in it is kept.
+     * [SaveResult.NeedsFileAccess]: the file is on the phone, but another app
+     * owns it and the app may not write it without "All files access".
+     */
+    suspend fun saveHighlightsToSource(book: Book, doc: PdfDoc, highlights: List<Highlight>): SaveResult =
+        writing.withLock {
+            withContext(Dispatchers.IO) {
+                val source = Uri.parse(book.sourceUri ?: return@withContext SaveResult.Failed)
+                val path = if (source.scheme == "file") source.path else realPath(source)
+                val temp = File(context.cacheDir, "highlights-${book.id}.pdf")
+                try {
+                    if (path != null && File(path).exists()) {
+                        if (!hasFileAccess() && !writable(source)) return@withContext SaveResult.NeedsFileAccess
+                        val file = File(path)
+                        val ok = runCatching {
+                            // Made aside first: the book is only overwritten once the new file is complete.
+                            file.inputStream().use { input -> temp.outputStream().use { doc.writeAnnotated(highlights, it, from = input) } }
+                            if (hasFileAccess()) {
+                                file.outputStream().use { out -> temp.inputStream().use { it.copyTo(out) } }
+                            } else {
+                                writeTo(source, temp)
+                            }
+                        }.onFailure { Log.w(TAG, "could not save highlights into $path", it) }.isSuccess
+                        if (ok) MediaScannerConnection.scanFile(context, arrayOf(path), arrayOf("application/pdf"), null)
+                        return@withContext if (ok) SaveResult.Saved else if (hasFileAccess()) SaveResult.Failed else SaveResult.NeedsFileAccess
+                    }
+                    // A file only another app can reach (no place on the phone found).
+                    runCatching {
+                        context.contentResolver.openInputStream(source)!!.use { input ->
+                            temp.outputStream().use { doc.writeAnnotated(highlights, it, from = input) }
+                        }
+                        writeTo(source, temp)
+                    }.onFailure { Log.w(TAG, "could not save highlights into $source", it) }
+                        // Without "All files access" the file's place may be hidden: with it, it may be found.
+                        .fold({ SaveResult.Saved }, { if (hasFileAccess()) SaveResult.Failed else SaveResult.NeedsFileAccess })
+                } finally {
+                    temp.delete()
+                }
+            }
+        }
+
+    /** Can [uri] be opened for writing (without "All files access")? */
+    private fun writable(uri: Uri): Boolean =
+        uri.scheme == "content" && runCatching { context.contentResolver.openFileDescriptor(uri, "rw")!!.close() }.isSuccess
+
+    /** Replaces the file behind [uri] with [from]. */
+    private fun writeTo(uri: Uri, from: File) {
+        context.contentResolver.openFileDescriptor(uri, "rw")!!.use { pfd ->
+            FileOutputStream(pfd.fileDescriptor).use { out ->
+                out.channel.truncate(0)
+                from.inputStream().use { it.copyTo(out) }
+            }
+        }
+    }
+
+    /** One save into a file at a time. */
+    private val writing = kotlinx.coroutines.sync.Mutex()
 
     private suspend fun importStream(name: String, open: () -> InputStream): Book = withContext(Dispatchers.IO) {
         val target = File(booksDir, "${System.currentTimeMillis()}.pdf")
@@ -196,3 +349,4 @@ class Library(private val context: Context, private val repo: Repository) {
         }
     }
 }
+private const val TAG = "Paperleaf"

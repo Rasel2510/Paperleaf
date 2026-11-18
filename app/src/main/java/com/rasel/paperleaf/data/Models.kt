@@ -9,6 +9,11 @@ data class Book(
     val filePath: String,
     val lastPage: Int,
     val pageCount: Int,
+    /**
+     * The file the book was added from, when the app may write to it: its
+     * highlights are saved into that file too, so they outlive the app.
+     */
+    val sourceUri: String? = null,
 ) {
     /** Cover image made at import, next to the PDF copy. */
     val coverPath: String get() = File(filePath).path.removeSuffix(".pdf") + ".jpg"

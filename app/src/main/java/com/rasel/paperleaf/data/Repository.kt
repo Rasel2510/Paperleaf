@@ -61,7 +61,11 @@ class Repository(private val helper: Db) {
         )
     }.also { changed() }
 
-    suspend fun renameBook(id: Long, title: String) = update("books", id, ContentValues().apply { put("title", title) })
+    /** The file the book came from, when the app may write to it (null: not). */
+    suspend fun setSourceUri(id: Long, uri: String?) =
+        update("books", id, ContentValues().apply { put("source_uri", uri) })
+
+    suspend fun renameBook(id: Long, title: String) =update("books", id, ContentValues().apply { put("title", title) })
 
     suspend fun saveProgress(id: Long, page: Int) =
         update("books", id, ContentValues().apply { put("last_page", page); put("last_opened", now()) })
@@ -435,7 +439,7 @@ private fun Cursor.string(column: String): String? {
     return if (isNull(i)) null else getString(i)
 }
 
-private fun Cursor.book() = Book(long("id"), string("title")!!, string("file_path")!!, int("last_page"), int("page_count"))
+private fun Cursor.book() = Book(long("id"), string("title")!!, string("file_path")!!, int("last_page"), int("page_count"), string("source_uri"))
 
 private fun Cursor.highlight(): Highlight {
     val colorIndex = getColumnIndexOrThrow("color")

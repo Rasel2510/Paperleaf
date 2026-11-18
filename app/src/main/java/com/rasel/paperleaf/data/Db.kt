@@ -9,7 +9,7 @@ import android.database.sqlite.SQLiteOpenHelper
  * what drawing highlights natively needs: their line rectangles, and whether
  * a book's PDF has been searched for marks made elsewhere.
  */
-class Db(context: Context) : SQLiteOpenHelper(context, "reader.db", null, 1) {
+class Db(context: Context) : SQLiteOpenHelper(context, "reader.db", null, 2) {
 
     override fun onConfigure(db: SQLiteDatabase) {
         db.setForeignKeyConstraintsEnabled(true)
@@ -24,7 +24,8 @@ class Db(context: Context) : SQLiteOpenHelper(context, "reader.db", null, 1) {
               last_page INTEGER NOT NULL DEFAULT 1,
               page_count INTEGER NOT NULL DEFAULT 0,
               last_opened INTEGER NOT NULL,
-              marks_imported INTEGER NOT NULL DEFAULT 0
+              marks_imported INTEGER NOT NULL DEFAULT 0,
+              source_uri TEXT
             )""",
         )
         db.execSQL(
@@ -72,5 +73,8 @@ class Db(context: Context) : SQLiteOpenHelper(context, "reader.db", null, 1) {
         db.execSQL("CREATE INDEX idx_words_book ON words(book_id)")
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        // 2: where the PDF came from, so highlights can be written back into that file.
+        if (oldVersion < 2) db.execSQL("ALTER TABLE books ADD COLUMN source_uri TEXT")
+    }
 }

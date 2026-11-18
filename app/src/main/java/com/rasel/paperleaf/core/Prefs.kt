@@ -77,6 +77,19 @@ class Prefs(context: Context) {
         prefs.edit().putBoolean("open_last_book", value).apply()
     }
 
+    private val _inPdf = MutableStateFlow(prefs.getBoolean("highlights_in_pdf", true))
+
+    /**
+     * Highlights are also saved into the book's own PDF file (they then outlive
+     * the app, and other reader apps show them). Off: only inside the app.
+     */
+    val highlightsInPdf: StateFlow<Boolean> = _inPdf
+
+    fun setHighlightsInPdf(value: Boolean) {
+        _inPdf.value = value
+        prefs.edit().putBoolean("highlights_in_pdf", value).apply()
+    }
+
     /** The book that was open when the app was left; -1 when the reader went back to the shelf. */
     var lastBookId: Long
         get() = prefs.getLong("last_book", -1)

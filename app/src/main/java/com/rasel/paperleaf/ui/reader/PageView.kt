@@ -161,10 +161,10 @@ fun PageView(
             if (h.page != page) continue
             val color = h.color ?: 0xFFFF9100.toInt()
             if (tint.isDark) {
-                mark.color = soften(color, 0.45f, 0xFF000000.toInt())
+                mark.color = soften(color, com.rasel.paperleaf.core.HIGHLIGHT_SOFTEN, 0xFF000000.toInt())
                 mark.xfermode = PorterDuffXfermode(PorterDuff.Mode.SCREEN)
             } else {
-                mark.color = soften(color, 0.45f, 0xFFFFFFFF.toInt())
+                mark.color = soften(color, com.rasel.paperleaf.core.HIGHLIGHT_SOFTEN, 0xFFFFFFFF.toInt())
                 mark.xfermode = PorterDuffXfermode(PorterDuff.Mode.MULTIPLY)
             }
             for (r in h.rects) c.drawRect(map(r), mark)
@@ -296,15 +296,8 @@ fun PageView(
 
                     when (kind) {
                         "tap" -> {
-                            if (state.selection != null) {
-                                state.clearSelection()
-                            } else if (currentCurl && state.zoom <= 1.05f && start.x < w * 0.28f) {
-                                state.turnPage(false)
-                            } else if (currentCurl && state.zoom <= 1.05f && start.x > w * 0.72f) {
-                                state.turnPage(true)
-                            } else {
-                                tapMiddle()
-                            }
+                            // Pages turn only by swiping; a tap anywhere shows or hides the bars.
+                            if (state.selection != null) state.clearSelection() else tapMiddle()
                         }
 
                         "long" -> {

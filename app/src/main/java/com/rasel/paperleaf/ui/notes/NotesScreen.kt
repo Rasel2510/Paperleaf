@@ -124,7 +124,8 @@ fun NotesScreen(book: Book, onBack: () -> Unit, onOpenPage: (Int) -> Unit) {
                 accent = Poster.mustard,
                 unit = "highlight",
                 separator = "\n\n",
-                entries = highlights?.map { h ->
+                // Newest first.
+                entries = highlights?.sortedByDescending { it.id }?.map { h ->
                     Entry(h.page, h.text, accent = h.color?.let { Color(it) }, onDelete = { confirm = h })
                 },
                 onOpenPage = onOpenPage,

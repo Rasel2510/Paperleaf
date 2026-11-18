@@ -119,6 +119,36 @@ private val retiredHighlightColors = mapOf(
     0xFF00AAFF.toInt() to 0xFF8B2CFF.toInt(), // light blue -> violet
 )
 
+/** The highlight colors on offer (ARGB): amber, green, pink, violet. */
+val highlightPalette = listOf(0xFFFF9100.toInt(), 0xFF00C853.toInt(), 0xFFF50057.toInt(), 0xFF8B2CFF.toInt())
+
+/** How far a highlight's color is mixed with white on the page: a marker pen, not paint. */
+const val HIGHLIGHT_SOFTEN = 0.45f
+
+/** [argb] mixed with white by [HIGHLIGHT_SOFTEN]: as the page shows it. */
+fun softHighlight(argb: Int): Int {
+    fun ch(shift: Int): Int {
+        val c = (argb shr shift) and 0xFF
+        return (c + (255 - c) * HIGHLIGHT_SOFTEN).toInt().coerceIn(0, 255)
+    }
+    return (0xFF shl 24) or (ch(16) shl 16) or (ch(8) shl 8) or ch(0)
+}
+
+/**
+ * The color a highlight gets inside the PDF: the soft color the page shows, so
+ * other reader apps (which draw the file's color as it is) look the same.
+ */
+fun highlightColorForFile(argb: Int): Int = softHighlight(argb)
+
+/**
+ * A color read from a PDF: one of ours (saved soft) is the palette color again;
+ * one from another app stays as it is.
+ */
+fun highlightColorFromFile(argb: Int): Int {
+    fun near(a: Int, b: Int) = intArrayOf(16, 8, 0).all { s -> kotlin.math.abs(((a shr s) and 0xFF) - ((b shr s) and 0xFF)) <= 4 }
+    return highlightPalette.firstOrNull { near(softHighlight(it), argb) } ?: argb
+}
+
 /** The color that replaces [argb], or null. A color read back from a PDF can be a step off per channel. */
 fun replacementForHighlightColor(argb: Int): Int? {
     fun near(other: Int) = intArrayOf(16, 8, 0).all { s -> kotlin.math.abs(((argb shr s) and 0xFF) - ((other shr s) and 0xFF)) <= 4 }

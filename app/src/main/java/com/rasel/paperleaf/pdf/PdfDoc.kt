@@ -1,5 +1,6 @@
 package com.rasel.paperleaf.pdf
 
+import kotlin.math.roundToInt
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.RectF
@@ -241,7 +242,9 @@ class PdfDoc private constructor(
                     if (rects.isEmpty()) continue
                     val rgb = annotation.color?.components
                     val color = if (rgb != null && rgb.size >= 3) {
-                        Color.argb(255, (rgb[0] * 255).toInt(), (rgb[1] * 255).toInt(), (rgb[2] * 255).toInt())
+                        com.rasel.paperleaf.core.highlightColorFromFile(
+                            Color.argb(255, (rgb[0] * 255).roundToInt(), (rgb[1] * 255).roundToInt(), (rgb[2] * 255).roundToInt()),
+                        )
                     } else {
                         0xFFFF9100.toInt()
                     }
@@ -254,10 +257,13 @@ class PdfDoc private constructor(
 
     /**
      * Writes a copy of the PDF with [highlights] as real PDF highlights, for
-     * other reader apps. Highlights already in the file are replaced.
+     * other reader apps. Highlights already in the file are replaced. [from]:
+     * the PDF to mark instead of the shelf copy (the file the book came from);
+     * it must have the same pages, or nothing is written.
      */
-    fun writeAnnotated(highlights: List<Highlight>, out: OutputStream) {
-        PDDocument.load(file).use { doc ->
+    fun writeAnnotated(highlights: List<Highlight>, out: OutputStream, from: java.io.InputStream? = null) {
+        (if (from != null) PDDocument.load(from) else PDDocument.load(file)).use { doc ->
+            check(doc.numberOfPages == pageCount) { "not the same book" }
             for ((i, page) in doc.pages.withIndex()) {
                 val kept = page.annotations.filterNot { it is PDAnnotationTextMarkup && it.subtype == "Highlight" }
                 val crop = page.cropBox
@@ -271,7 +277,8 @@ class PdfDoc private constructor(
                         floatArrayOf(left, top, right, top, left, bottom, right, bottom).copyInto(quads, k * 8)
                     }
                     val all = RectF(h.rects.first()).apply { h.rects.forEach { union(it) } }
-                    val color = h.color ?: 0xFFFF9100.toInt()
+                    // Soft, as the page shows it: other apps draw the file's color as it is.
+                    val color = com.rasel.paperleaf.core.highlightColorForFile(h.color ?: 0xFFFF9100.toInt())
                     PDAnnotationTextMarkup(PDAnnotationTextMarkup.SUB_TYPE_HIGHLIGHT).apply {
                         rectangle = PDRectangle(
                             all.left + crop.lowerLeftX,
