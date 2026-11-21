@@ -152,6 +152,18 @@ private fun Reader(state: ReaderState, onClose: () -> Unit) {
     val tint by App.prefs.tint.collectAsState()
     val turnStyle by App.prefs.turn.collectAsState()
     val keepAwake by App.prefs.keepAwake.collectAsState()
+    val orientation by App.prefs.orientation.collectAsState()
+
+    // Held one way while a book is open; leaving the reader gives the phone its rotation back.
+    DisposableEffect(orientation) {
+        val activity = context as? Activity
+        activity?.requestedOrientation = when (orientation) {
+            com.rasel.paperleaf.core.ReaderOrientation.Phone -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            com.rasel.paperleaf.core.ReaderOrientation.Upright -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            com.rasel.paperleaf.core.ReaderOrientation.Sideways -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        }
+        onDispose { activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }
+    }
     val changes by App.repo.changes.collectAsState()
 
     var chrome by remember { mutableStateOf(true) }
@@ -355,6 +367,10 @@ private fun Reader(state: ReaderState, onClose: () -> Unit) {
                                     if (state.toc.isEmpty()) toast("This PDF has no table of contents.") else contents = true
                                 }
                                 item("Go to page") { if (state.pageCount > 1) goTo = true }
+                                // One page or two without the phone's auto-rotate: the other two ways.
+                                for (o in com.rasel.paperleaf.core.ReaderOrientation.entries) {
+                                    if (o != orientation) item(o.menuLabel) { App.prefs.setOrientation(o) }
+                                }
                                 item("Save annotated PDF") {
                                     val name = state.book.title.replace(Regex("""[\\/:*?"<>|]"""), "_")
                                     saveAnnotated.launch("$name.pdf")
@@ -555,7 +571,7 @@ private fun SelectionBar(
                         when {
                             lookup.loading -> "Looking up…"
                             lookup.meaning != null -> lookup.meaning
-                            else -> "No meaning found. Check your internet connection."
+                            else -> lookup.missing ?: "No meaning found for “${lookup.word}”."
                         },
                         maxLines = 4,
                         overflow = TextOverflow.Ellipsis,

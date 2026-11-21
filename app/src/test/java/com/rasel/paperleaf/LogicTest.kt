@@ -106,4 +106,14 @@ class LogicTest {
         // One of ours from before (saved at full strength) too.
         assertEquals(0xFF8B2CFF.toInt(), highlightColorFromFile(0xFF8B2CFF.toInt()))
     }
+
+    @Test
+    fun missingMeaningSaysWhy() {
+        assertEquals(
+            "Could not reach the dictionary. Check your internet connection.",
+            Dictionary.missingMessage("camel", Dictionary.Result.Unreachable),
+        )
+        assertEquals("No meaning found for “Santiago”. It may be a name.", Dictionary.missingMessage("Santiago", Dictionary.Result.NotFound))
+        assertEquals("No meaning found for “xyzzy”.", Dictionary.missingMessage("xyzzy", Dictionary.Result.NotFound))
+    }
 }

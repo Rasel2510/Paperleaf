@@ -39,7 +39,13 @@ data class Selection(val page: Int, val anchor: Int, val focus: Int) {
 }
 
 /** The meaning of the one word that is selected. */
-data class Lookup(val word: String, val meaning: String?, val loading: Boolean)
+data class Lookup(
+    val word: String,
+    val meaning: String?,
+    val loading: Boolean,
+    /** Why there is no meaning (not in the dictionary, or no connection). */
+    val missing: String? = null,
+)
 
 data class Match(val page: Int, val rects: List<RectF>)
 
@@ -452,9 +458,12 @@ class ReaderState(val book: Book, startPage: Int?, val doc: PdfDoc, private val 
         // The selection changes while its handles are dragged: ask once it rests.
         lookupJob = scope.launch {
             delay(350)
-            val found = Dictionary.lookup(word)
+            val result = Dictionary.define(word)
+            val found = (result as? Dictionary.Result.Found)?.meaning
             if (found != null) meanings[word.lowercase()] = found
-            if (lookup?.word == word) lookup = Lookup(word, found, false)
+            if (lookup?.word == word) {
+                lookup = Lookup(word, found, false, if (found == null) Dictionary.missingMessage(word, result) else null)
+            }
         }
     }
 

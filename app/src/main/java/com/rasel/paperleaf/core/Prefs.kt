@@ -49,6 +49,16 @@ enum class PageTint(val label: String, val swatch: Int) {
 
 enum class PageTurn(val label: String) { Flip("Book flip"), Slide("Slide") }
 
+/**
+ * How the reader is turned (the rest of the app always follows the phone).
+ * [menuLabel]: the reader menu item that switches to it.
+ */
+enum class ReaderOrientation(val menuLabel: String) {
+    Phone("Follow phone rotation"),
+    Upright("One page (upright)"),
+    Sideways("Two pages (sideways)"),
+}
+
 enum class LibrarySort(val label: String) { Recent("Recently read"), Title("Title A–Z"), Progress("Most read") }
 
 /** The reader preferences, saved on the device. Apply to every book. */
@@ -63,6 +73,16 @@ class Prefs(context: Context) {
 
     private val _keepAwake = MutableStateFlow(prefs.getBoolean("keep_awake", true))
     val keepAwake: StateFlow<Boolean> = _keepAwake
+
+    private val _orientation = MutableStateFlow(enumOr(prefs.getString("reader_orientation", null), ReaderOrientation.Phone))
+
+    /** How the reader is turned: as the phone's auto-rotate says, or held one way. */
+    val orientation: StateFlow<ReaderOrientation> = _orientation
+
+    fun setOrientation(value: ReaderOrientation) {
+        _orientation.value = value
+        prefs.edit().putString("reader_orientation", value.name).apply()
+    }
 
     private val _sort = MutableStateFlow(enumOr(prefs.getString("library_sort", null), LibrarySort.Recent))
     val sort: StateFlow<LibrarySort> = _sort

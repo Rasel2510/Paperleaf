@@ -168,9 +168,10 @@ fun NotesScreen(book: Book, onBack: () -> Unit, onOpenPage: (Int) -> Unit) {
                             {
                                 toast("Looking up “${w.word}”…")
                                 scope.launch {
-                                    val meaning = Dictionary.lookup(w.word)
-                                    if (meaning == null) toast("No meaning found. Check your internet connection.")
-                                    else App.repo.setWordMeaning(w.id, meaning)
+                                    when (val result = Dictionary.define(w.word)) {
+                                        is Dictionary.Result.Found -> App.repo.setWordMeaning(w.id, result.meaning)
+                                        else -> toast(Dictionary.missingMessage(w.word, result))
+                                    }
                                 }
                             }
                         } else null,
