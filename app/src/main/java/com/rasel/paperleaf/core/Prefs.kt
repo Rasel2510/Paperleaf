@@ -49,15 +49,8 @@ enum class PageTint(val label: String, val swatch: Int) {
 
 enum class PageTurn(val label: String) { Flip("Book flip"), Slide("Slide") }
 
-/**
- * How the reader is turned (the rest of the app always follows the phone).
- * [menuLabel]: the reader menu item that switches to it.
- */
-enum class ReaderOrientation(val menuLabel: String) {
-    Phone("Follow phone rotation"),
-    Upright("One page (upright)"),
-    Sideways("Two pages (sideways)"),
-}
+/** How the reader is turned: as the phone's auto-rotate says, or held one way (the rest of the app follows the phone). */
+enum class ReaderOrientation { Phone, Upright, Sideways }
 
 enum class LibrarySort(val label: String) { Recent("Recently read"), Title("Title A–Z"), Progress("Most read") }
 
@@ -82,6 +75,16 @@ class Prefs(context: Context) {
     fun setOrientation(value: ReaderOrientation) {
         _orientation.value = value
         prefs.edit().putString("reader_orientation", value.name).apply()
+    }
+
+    private val _edges = MutableStateFlow(prefs.getBoolean("book_edges", true))
+
+    /** The stacked page edges beside the page, like the side of a real book. */
+    val bookEdges: StateFlow<Boolean> = _edges
+
+    fun setBookEdges(value: Boolean) {
+        _edges.value = value
+        prefs.edit().putBoolean("book_edges", value).apply()
     }
 
     private val _sort = MutableStateFlow(enumOr(prefs.getString("library_sort", null), LibrarySort.Recent))

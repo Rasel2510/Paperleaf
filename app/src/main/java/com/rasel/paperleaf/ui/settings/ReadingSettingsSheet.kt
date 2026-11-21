@@ -54,6 +54,7 @@ fun ReadingSettingsSheet(onDismiss: () -> Unit) {
     val awake by App.prefs.keepAwake.collectAsState()
     val openLast by App.prefs.openLastBook.collectAsState()
     val inPdf by App.prefs.highlightsInPdf.collectAsState()
+    val edges by App.prefs.bookEdges.collectAsState()
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -142,6 +143,18 @@ fun ReadingSettingsSheet(onDismiss: () -> Unit) {
                 Switch(
                     checked = awake,
                     onCheckedChange = { App.prefs.setKeepAwake(it) },
+                    colors = SwitchDefaults.colors(checkedTrackColor = Poster.terracotta, checkedThumbColor = Poster.onDark),
+                )
+            }
+            Spacer(Modifier.height(20.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Book edges", style = MaterialTheme.typography.titleLarge)
+                    Text("Page edges beside the page, thicker on the side you have read.", style = MaterialTheme.typography.bodySmall)
+                }
+                Switch(
+                    checked = edges,
+                    onCheckedChange = { App.prefs.setBookEdges(it) },
                     colors = SwitchDefaults.colors(checkedTrackColor = Poster.terracotta, checkedThumbColor = Poster.onDark),
                 )
             }

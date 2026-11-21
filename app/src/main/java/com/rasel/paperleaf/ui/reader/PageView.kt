@@ -56,6 +56,8 @@ fun PageView(
     modifier: Modifier = Modifier,
     /** What is being read aloud now: page (1-based) and characters. */
     spoken: Pair<Int, IntRange>? = null,
+    /** Stacked page edges beside the page, like the side of a book. */
+    edges: Boolean = false,
     /** Space kept free above and below two pages (status bar, page line), in pixels. */
     spreadInsets: Pair<Float, Float> = 0f to 0f,
 ) {
@@ -69,12 +71,59 @@ fun PageView(
         Paint(Paint.FILTER_BITMAP_FLAG).apply { colorFilter = ColorMatrixColorFilter(tint.matrix()) }
     }
 
+    // Book edges: the sheets of the book beside the page, as on a real book's
+    // side. The read part of the book stacks up on the left, the rest on the
+    // right. Read through state: the touch handling keeps the first closures.
+    val currentEdges by rememberUpdatedState(edges)
+    val dp = density.density
+    /** Room for the edges on the right of one page (the screen is narrow: thin). */
+    fun singleEdge(): Float = if (currentEdges) 4f * dp else 0f
+    /** Room for the edges on each side of two pages (there is space beside them). */
+    fun spreadEdge(): Float = if (currentEdges) 12f * dp else 0f
+
+    /** How much of the book is read when [page] is open (0 at the start, 1 at the end). */
+    fun readFraction(page: Int): Float =
+        if (state.pageCount <= 1) 0f else ((page - 1).toFloat() / (state.pageCount - 1)).coerceIn(0f, 1f)
+
+    val edgeFill = remember(tint) {
+        Paint().apply { color = soften(tint.blank, 0.07f, if (tint.isDark) 0xFFFFFFFF.toInt() else 0xFF000000.toInt()) }
+    }
+    val edgeLine = remember(tint) {
+        Paint().apply { color = if (tint.isDark) 0x33FFFFFF else 0x2E000000 }
+    }
+
+    /** A stack of sheet edges [width] wide against [page]'s left or right side. */
+    fun drawStack(c: Canvas, page: RectF, toRight: Boolean, width: Float) {
+        if (width < 1f) return
+        val step = 2.5f * dp
+        val sheets = (width / step).toInt().coerceAtLeast(1)
+        val each = width / sheets
+        for (i in sheets downTo 1) {
+            // Deeper sheets a touch shorter: the stack has some depth.
+            val inset = i * 0.6f * dp
+            val outer = if (toRight) page.right + i * each else page.left - i * each
+            val r = if (toRight) RectF(page.right, page.top + inset, outer, page.bottom - inset)
+            else RectF(outer, page.top + inset, page.left, page.bottom - inset)
+            c.drawRect(r, edgeFill)
+            c.drawRect(if (toRight) outer - 1f else outer, r.top, if (toRight) outer else outer + 1f, r.bottom, edgeLine)
+        }
+    }
+
+    /** The edges beside two pages whose left page is [left]: read ones left, the rest right. */
+    fun drawStacks(c: Canvas, leftRect: RectF, rightRect: RectF, left: Int) {
+        if (spreadEdge() <= 0f) return
+        val read = readFraction(left)
+        drawStack(c, leftRect, toRight = false, width = spreadEdge() * read)
+        drawStack(c, rightRect, toRight = true, width = spreadEdge() * (1 - read))
+    }
+
     /** Two pages meeting at the middle of the screen (left page [left]'s size). */
     fun spreadRects(left: Int, w: Float, h: Float): Pair<RectF, RectF> {
         val size = state.doc.pageSize((left - 1).coerceIn(0, state.pageCount - 1))
         val (insetTop, insetBottom) = spreadInsets
         val room = (h - insetTop - insetBottom).coerceAtLeast(h / 2)
-        val s = minOf((w / 2) / size.width, room / size.height)
+        // With book edges, room is kept beside the pages for them.
+        val s = minOf((w / 2 - spreadEdge()) / size.width, room / size.height)
         val pw = size.width * s
         val ph = size.height * s
         val spine = w / 2
@@ -84,7 +133,7 @@ fun PageView(
 
     /** Where each page on screen sits (before zoom): one page, or two side by side. */
     fun layout(w: Float, h: Float): List<Pair<Int, RectF>> {
-        if (!state.spread) return listOf(state.page to state.images.fit(state.page - 1, RectF(0f, 0f, w, h)))
+        if (!state.spread) return listOf(state.page to state.images.fit(state.page - 1, RectF(0f, 0f, w - singleEdge(), h)))
         val (left, right) = spreadRects(state.page, w, h)
         return if (state.page + 1 <= state.pageCount) listOf(state.page to left, state.page + 1 to right)
         else listOf(state.page to left)
@@ -147,7 +196,9 @@ fun PageView(
         val fill = Paint().apply { color = tint.blank }
         c.drawRect(area, fill)
         if (page !in 1..state.pageCount) return
-        val fit = if (exact) area else state.images.fit(page - 1, area)
+        // One page: room kept on the right for its edges (drawn with it, as part of the sheet).
+        val fit = if (exact) area else state.images.fit(page - 1, RectF(area.left, area.top, area.right - singleEdge(), area.bottom))
+        if (!exact && singleEdge() > 0f) drawStack(c, fit, toRight = true, width = singleEdge() * (1 - readFraction(page)))
         val bitmap = (if (live && state.zoom > 1.05f) state.images.sharp(page - 1) else null) ?: state.images[page - 1]
         if (bitmap != null) c.drawBitmap(bitmap, null, fit, pagePaint)
         val scale = fit.width() / state.doc.pageSize(page - 1).width
@@ -453,10 +504,13 @@ fun PageView(
                     cv.drawColor(tint.blank)
                     drawPage(cv, left, leftRect, live, exact = true)
                     if (left + 1 <= state.pageCount) drawPage(cv, left + 1, rightRect, live, exact = true)
+                    drawStacks(cv, leftRect, rightRect, left)
                     cv.drawRect(w / 2 - 28f, leftRect.top, w / 2 + 28f, leftRect.bottom, spine)
                 }
                 c.drawColor(tint.blank)
                 if (turn != null && curl) {
+                    // The edges stay put while a leaf turns over the pages.
+                    drawStacks(c, leftRect, rightRect, if (turn.forward) turn.from else turn.to)
                     drawBookCurl(
                         c, leftRect, rightRect, state.progress, turn.forward, state.pivotY, state.tilt,
                         first = if (turn.forward) turn.from else turn.to,

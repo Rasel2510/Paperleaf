@@ -55,8 +55,7 @@ import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.ZoomIn
-import androidx.compose.material.icons.filled.ZoomOut
+import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -153,6 +152,7 @@ private fun Reader(state: ReaderState, onClose: () -> Unit) {
     val turnStyle by App.prefs.turn.collectAsState()
     val keepAwake by App.prefs.keepAwake.collectAsState()
     val orientation by App.prefs.orientation.collectAsState()
+    val bookEdges by App.prefs.bookEdges.collectAsState()
 
     // Held one way while a book is open; leaving the reader gives the phone its rotation back.
     DisposableEffect(orientation) {
@@ -307,6 +307,7 @@ private fun Reader(state: ReaderState, onClose: () -> Unit) {
             tint = tint,
             curl = turnStyle == PageTurn.Flip,
             onTapMiddle = { chrome = !chrome },
+            edges = bookEdges,
             spoken = aloud.current,
             spreadInsets = with(LocalDensity.current) {
                 (WindowInsets.statusBars.getTop(this) + 6.dp.toPx()) to
@@ -343,16 +344,18 @@ private fun Reader(state: ReaderState, onClose: () -> Unit) {
                             )
                         }
                         IconButton(onClick = { state.searching = true; chrome = true }) { Icon(Icons.Default.Search, "Search in book", tint = p.ink) }
+                        // One page or two, without the phone's auto-rotate (zoom is a pinch).
                         IconButton(onClick = {
-                            if (state.zoom > 1.05f) {
-                                state.zoom = 1f
-                                state.pan = Offset.Zero
-                            } else {
-                                state.zoom = 2f * state.zoomBoost
-                                state.images.sharpen((state.visiblePages.first - 1)..(state.visiblePages.last - 1), state.zoom)
-                            }
+                            App.prefs.setOrientation(
+                                if (state.spread) com.rasel.paperleaf.core.ReaderOrientation.Upright
+                                else com.rasel.paperleaf.core.ReaderOrientation.Sideways,
+                            )
                         }) {
-                            Icon(if (state.zoom > 1.05f) Icons.Default.ZoomOut else Icons.Default.ZoomIn, "Zoom", tint = p.ink)
+                            Icon(
+                                Icons.Default.ScreenRotation,
+                                if (state.spread) "One page (upright)" else "Two pages (sideways)",
+                                tint = p.ink,
+                            )
                         }
                         IconButton(onClick = { notes = true }) { Icon(Icons.AutoMirrored.Filled.ListAlt, "Highlights, bookmarks, words", tint = p.ink) }
                         Box {
@@ -367,9 +370,9 @@ private fun Reader(state: ReaderState, onClose: () -> Unit) {
                                     if (state.toc.isEmpty()) toast("This PDF has no table of contents.") else contents = true
                                 }
                                 item("Go to page") { if (state.pageCount > 1) goTo = true }
-                                // One page or two without the phone's auto-rotate: the other two ways.
-                                for (o in com.rasel.paperleaf.core.ReaderOrientation.entries) {
-                                    if (o != orientation) item(o.menuLabel) { App.prefs.setOrientation(o) }
+                                // The toolbar's rotate button holds the reader one way; this lets go.
+                                if (orientation != com.rasel.paperleaf.core.ReaderOrientation.Phone) {
+                                    item("Follow phone rotation") { App.prefs.setOrientation(com.rasel.paperleaf.core.ReaderOrientation.Phone) }
                                 }
                                 item("Save annotated PDF") {
                                     val name = state.book.title.replace(Regex("""[\\/:*?"<>|]"""), "_")
